@@ -1,0 +1,9 @@
+name: test child
+on:
+  workflow_call:
+jobs:
+  echo-step:
+    runs-on: ubuntu-latest
+    steps:
+      - name: hello
+        run: echo "reusable workflow ok"

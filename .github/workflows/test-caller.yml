@@ -1,0 +1,6 @@
+name: test caller
+on:
+  workflow_dispatch:
+jobs:
+  call-child:
+    uses: ./.github/workflows/test-child.yml
