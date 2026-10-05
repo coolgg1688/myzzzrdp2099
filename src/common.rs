@@ -2358,6 +2358,18 @@ pub fn rustdesk_interval(i: Interval) -> ThrottledInterval {
 }
 
 pub fn load_custom_client() {
+    // --- Preset defaults for Z远程协助 self-hosted build ---
+    {
+        let mut d = config::DEFAULT_SETTINGS.write().unwrap();
+        d.insert(
+            "api-server".to_string(),
+            "https://zrdp2099.sjgl580.com:10086".to_string(),
+        );
+        d.insert(
+            "key".to_string(),
+            "xYVfXjC5hX6xhxj6HN7NHF5cu6kPKhBMsn5mOeQ5t+o=".to_string(),
+        );
+    }
     #[cfg(debug_assertions)]
     if let Ok(data) = std::fs::read_to_string("./custom.txt") {
         read_custom_client(data.trim());

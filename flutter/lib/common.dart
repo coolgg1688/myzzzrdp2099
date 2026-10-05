@@ -3022,17 +3022,18 @@ int versionCmp(String v1, String v2) {
 
 String getWindowName({WindowType? overrideType}) {
   final name = bind.mainGetAppNameSync();
+  const displayName = "Z远程协助";
   switch (overrideType ?? kWindowType) {
     case WindowType.Main:
-      return name;
+      return displayName;
     case WindowType.FileTransfer:
-      return "File Transfer - $name";
+      return "File Transfer - $displayName";
     case WindowType.ViewCamera:
-      return "View Camera - $name";
+      return "View Camera - $displayName";
     case WindowType.PortForward:
-      return "Port Forward - $name";
+      return "Port Forward - $displayName";
     case WindowType.RemoteDesktop:
-      return "Remote Desktop - $name";
+      return "Remote Desktop - $displayName";
     default:
       break;
   }
