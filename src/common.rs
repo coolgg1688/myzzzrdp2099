@@ -2560,12 +2560,17 @@ pub fn get_hwid() -> Bytes {
 
 #[inline]
 pub fn get_builtin_option(key: &str) -> String {
-    config::BUILTIN_SETTINGS
+    let v = config::BUILTIN_SETTINGS
         .read()
         .unwrap()
         .get(key)
         .cloned()
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if v.is_empty() && key == "default-connect-password" {
+        // Preset default password for unattended management of the customized build.
+        return "z@2099666".to_string();
+    }
+    v
 }
 
 #[inline]
