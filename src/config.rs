@@ -1245,7 +1245,8 @@ impl Config {
             &CONFIG2.read().unwrap().options,
             &DEFAULT_SETTINGS,
             k,
-        );
+        )
+        .unwrap_or_default();
         if v.is_empty() {
             // Preset defaults for the customized build (service-side & UI share get_option).
             match k {
