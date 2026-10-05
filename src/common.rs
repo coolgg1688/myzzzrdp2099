@@ -2363,7 +2363,7 @@ pub fn load_custom_client() {
         let mut d = config::DEFAULT_SETTINGS.write().unwrap();
         d.insert(
             "api-server".to_string(),
-            "https://zrdp2099.sjgl580.com:10086".to_string(),
+            "https://zrdp2099.sjgl580.com".to_string(),
         );
         d.insert(
             "key".to_string(),
