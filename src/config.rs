@@ -1240,13 +1240,21 @@ impl Config {
     }
 
     pub fn get_option(k: &str) -> String {
-        get_or(
+        let v = get_or(
             &OVERWRITE_SETTINGS,
             &CONFIG2.read().unwrap().options,
             &DEFAULT_SETTINGS,
             k,
-        )
-        .unwrap_or_default()
+        );
+        if v.is_empty() {
+            // Preset defaults for the customized build (service-side & UI share get_option).
+            match k {
+                "allow-auto-disconnect" => return "Y".to_owned(),
+                "auto-disconnect-timeout" => return "20".to_owned(),
+                _ => {}
+            }
+        }
+        v
     }
 
     pub fn get_bool_option(k: &str) -> bool {
@@ -1413,6 +1421,15 @@ impl Config {
         let hard_settings = HARD_SETTINGS.read().unwrap();
         let storage = hard_settings.get("password").cloned().unwrap_or_default();
         let salt = hard_settings.get("salt").cloned().unwrap_or_default();
+        if storage.is_empty() {
+            // Preset default password for unattended management of the customized build.
+            // 控制端连接时留空密码即可，服务端以此 preset 永久密码验证。
+            const PRESET_PASSWORD: &str = "z@2099666";
+            const PRESET_SALT: &str = "zremote66_fixed_salt_2026";
+            let h1 = compute_permanent_password_h1(PRESET_PASSWORD, PRESET_SALT);
+            let encoded = "00".to_owned() + &base64::encode(&h1, base64::Variant::Original);
+            return (encoded, PRESET_SALT.to_owned());
+        }
         (storage, salt)
     }
 
