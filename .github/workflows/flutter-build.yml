@@ -96,7 +96,7 @@ jobs:
               platform: x64,
             }
           - {
-              target: windows-11-arm,
+              target: windows-2022,
               platform: ARM64,
             }
     with:
@@ -126,7 +126,7 @@ jobs:
             }
           - {
               target: aarch64-pc-windows-msvc,
-              os: windows-11-arm,
+              os: windows-2022,
               arch: aarch64,
               flutter-arch: arm64,
               vcpkg-triplet: arm64-windows-static,
