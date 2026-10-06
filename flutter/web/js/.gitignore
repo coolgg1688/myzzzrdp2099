@@ -7,3 +7,4 @@ dist-ssr
 ogvjs
 .vscode
 .yarn
+package-lock.json
