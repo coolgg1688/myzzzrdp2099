@@ -1250,7 +1250,7 @@ fn collect() -> Value {
             "free_gb": r1(fb/1073741824.0),
             "used_gb": r1(((tb-fb).max(0.0))/1073741824.0),
         });
-        by_dev.entry(dev.clone()).or_default().push(part);
+        by_dev.entry(dev.to_string()).or_default().push(part);
         grand_t += tb; grand_f += fb;
     }
     let mut disks: Vec<Value> = Vec::new();
