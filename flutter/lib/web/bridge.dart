@@ -202,6 +202,14 @@ class RustdeskImpl {
         () => js.context.callMethod('getByName', ['option:session', arg]));
   }
 
+  // Z远程协助: config-info ops (uninstall / service start-stop / refresh) are
+  // desktop/mobile FFI only; the web bridge is inert (the v1 JS client is the
+  // actual web client), so surface a clear error instead of hanging the page.
+  Future<String> sessionSendConfigOp(
+      {required UuidValue sessionId, required String json, dynamic hint}) {
+    throw UnimplementedError("sessionSendConfigOp");
+  }
+
   Future<void> sessionLogin(
       {required UuidValue sessionId,
       required String osUsername,
