@@ -631,7 +631,6 @@ jobs:
             ./SignOutput/rustdesk-*.exe
 
   build-rustdesk-ios:
-    if: ${{ inputs.upload-artifact }}
     name: build rustdesk ios ipa
     if: false
     runs-on: ${{ matrix.job.os }}
@@ -1346,7 +1345,6 @@ jobs:
   build-rustdesk-android-universal:
     needs: [build-rustdesk-android]
     name: build rustdesk android universal apk
-    if: ${{ inputs.upload-artifact }}
     if: false
     runs-on: ubuntu-24.04
     env:
@@ -2197,7 +2195,6 @@ jobs:
           path: ${{ env.DRM_DEB }}
 
   build-rustdesk-linux-sciter:
-    if: ${{ inputs.upload-artifact }}
     if: false
     runs-on: ${{ matrix.job.on }}
     name: build-rustdesk-linux-sciter ${{ matrix.job.target }}
@@ -2444,7 +2441,6 @@ jobs:
     needs: [build-rustdesk-linux]
     if: false
     runs-on: ubuntu-22.04
-    if: ${{ inputs.upload-artifact }}
     strategy:
       fail-fast: false
       matrix:
@@ -2500,7 +2496,6 @@ jobs:
       - build-rustdesk-linux-sciter
     if: false
     runs-on: ${{ matrix.job.on }}
-    if: ${{ inputs.upload-artifact }}
     strategy:
       fail-fast: false
       matrix:
