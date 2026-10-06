@@ -1,7 +1,11 @@
 import 'dart:convert';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart'
+    show WindowController;
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/main.dart' show kWindowId;
+import 'package:flutter_hbb/utils/multi_window_manager.dart' show WindowType;
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 
@@ -68,7 +72,8 @@ class ConfigInfoController extends ChangeNotifier {
     opPending = true;
     notifyListeners();
     try {
-      await bind.sessionSendConfigOp(gFFI.sessionId, jsonEncode(payload));
+      await bind.sessionSendConfigOp(
+          sessionId: gFFI.sessionId, json: jsonEncode(payload));
     } catch (e) {
       opPending = false;
       opResultMessage = '发送失败: $e';
