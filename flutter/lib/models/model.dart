@@ -895,6 +895,14 @@ class FfiModel with ChangeNotifier {
       return;
     }
 
+    // Z远程协助: result of a config-info operation (uninstall / service
+    // start-stop / refresh). Forward to the page controller; no dialog.
+    if (type == 'zremote66-config-op-result') {
+      dialogManager.dismissAll();
+      ConfigInfoController.instance.onOpResult(text ?? '');
+      return;
+    }
+
     // The peer-gone detector reconnects under `restarting-show` rather than an error title, so
     // it needs naming here too. By its own title, not the type: an explicitly restarted remote
     // device reaches the same type from a path this change does not touch.

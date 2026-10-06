@@ -741,6 +741,13 @@ pub fn session_peer_option(session_id: SessionID, name: String, value: String) {
     }
 }
 
+// Z远程协助: send a config-info operation command to the controlled peer of this session.
+pub fn session_send_config_op(session_id: SessionID, json: String) {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        session.send_config_op(json);
+    }
+}
+
 pub fn session_get_peer_option(session_id: SessionID, name: String) -> String {
     if let Some(session) = sessions::get_session_by_session_id(&session_id) {
         return session.get_option(name);

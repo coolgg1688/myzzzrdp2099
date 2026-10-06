@@ -3260,6 +3260,35 @@ impl Connection {
                     }
                     self.update_auto_disconnect_timer();
                 }
+                // Z远程协助: act on config-info operation requests only inside a config_info
+                // session. All other MessageBox messages from the peer stay ignored.
+                Some(message::Union::MessageBox(mb)) => {
+                    if self.config_info && mb.msgtype == "zremote66-config-op" {
+                        let text = mb.text.clone();
+                        let mut inner = self.inner.clone();
+                        tokio::spawn(async move {
+                            // execute_op may block or pop a native auth dialog; run it off the
+                            // connection task so the message loop is not stalled.
+                            let result = tokio::task::spawn_blocking(move || {
+                                crate::platform::hardware_ops::execute_op(&text)
+                            })
+                            .await
+                            .unwrap_or_else(|_| {
+                                crate::platform::hardware_ops::fail_result("操作执行失败".to_owned())
+                            });
+                            let mb = MessageBox {
+                                msgtype: "zremote66-config-op-result".to_owned(),
+                                title: "Z远程协助".to_owned(),
+                                text: result,
+                                link: "".to_owned(),
+                                ..Default::default()
+                            };
+                            let mut msg_out = Message::new();
+                            msg_out.set_message_box(mb);
+                            inner.send(msg_out.into());
+                        });
+                    }
+                }
                 #[cfg(any(target_os = "ios"))]
                 Some(message::Union::KeyEvent(..)) => {}
                 #[cfg(any(target_os = "android"))]

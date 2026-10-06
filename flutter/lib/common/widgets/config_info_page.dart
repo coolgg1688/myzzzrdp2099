@@ -19,9 +19,14 @@ class ConfigInfoController extends ChangeNotifier {
   bool loading = true;
   String? error;
 
+  // Z远程协助: 软件卸载 / 服务启停 / refresh 操作的状态与结果回传。
+  bool opPending = false;
+  String? opResultMessage;
+
   void update(String raw) {
     // Empty payload (collection failed on the peer) -> every tab falls back to
     // "暂不支持" instead of surfacing a parse error.
+    _resetOpState();
     if (raw.trim().isEmpty) {
       data = {};
       error = null;
@@ -48,8 +53,136 @@ class ConfigInfoController extends ChangeNotifier {
     data = null;
     loading = true;
     error = null;
+    _resetOpState();
     notifyListeners();
   }
+
+  void _resetOpState() {
+    opPending = false;
+    opResultMessage = null;
+  }
+
+  // Z远程协助: 向被控端发送配置操作（uninstall / service_stop / service_start /
+  // refresh）。bind.sessionSendConfigOp 由 CI bridge 重新生成后可用。
+  Future<void> sendOp(Map<String, dynamic> payload) async {
+    opPending = true;
+    notifyListeners();
+    try {
+      await bind.sessionSendConfigOp(gFFI.sessionId, jsonEncode(payload));
+    } catch (e) {
+      opPending = false;
+      opResultMessage = '发送失败: $e';
+      notifyListeners();
+    }
+  }
+
+  // Z远程协助: 被控端回传 {ok, message, data?}。
+  // - ok 且 data 非空 => refresh 场景，data 为完整配置 JSON，直接更新全部 Tab。
+  // - ok 且无 data => 操作执行成功，自动发 refresh 拉最新列表。
+  // - ok:false => 面板展示 message（含"权限"时由 UI 高亮提示）。
+  void onOpResult(String raw) {
+    opPending = false;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        opResultMessage = '返回数据格式错误';
+        notifyListeners();
+        return;
+      }
+      final ok = decoded['ok'] == true;
+      final msg = decoded['message']?.toString() ?? '';
+      if (ok && decoded['data'] != null) {
+        // refresh 回包：整体重建数据（分页 State 内部已 clamp 页码）。
+        update(jsonEncode(decoded['data']));
+        opResultMessage = msg.isEmpty ? '刷新成功' : msg;
+      } else if (ok) {
+        opResultMessage = msg.isEmpty ? '操作成功' : msg;
+        notifyListeners();
+        // 成功后自动刷新列表。
+        sendOp({'op': 'refresh'});
+        return;
+      } else {
+        opResultMessage = msg.isEmpty ? '操作失败' : msg;
+      }
+    } catch (e) {
+      opResultMessage = '解析失败: $e';
+    }
+    notifyListeners();
+  }
+}
+
+// Z远程协助: 自定义标题栏高度（桌面子窗口自绘头部，替代系统 AppBar）。
+const double _kConfigTitleBarHeight = 42;
+
+// Z远程协助: 分页大小（已安装软件 / 服务列表）。
+const int _kConfigPageSize = 100;
+
+// Z远程协助: GB 数值统一保留 1 位小数。Rust 侧已圆整，这里再做防御性
+// 格式化，兼容旧被控端发来的多位小数 / int / 字符串 / 非法值。
+String _fmtGb(dynamic v) {
+  if (v is num) return v.toStringAsFixed(1);
+  if (v is String) {
+    final d = double.tryParse(v.trim());
+    if (d != null) return d.toStringAsFixed(1);
+  }
+  return '0.0';
+}
+
+// Z远程协助: 把任意取值安全转成 double（用于容量/速率等数值判定）。
+double _toGb(dynamic v) {
+  if (v is num) return v.toDouble();
+  if (v is String) return double.tryParse(v.trim()) ?? 0.0;
+  return 0.0;
+}
+
+// Z远程协助: 把任意取值安全转成 int（核心数/线程数）。
+int _toInt(dynamic v) {
+  if (v is num) return v.toInt();
+  if (v is String) {
+    return int.tryParse(v.trim()) ?? double.tryParse(v.trim())?.toInt() ?? 0;
+  }
+  return 0;
+}
+
+// Z远程协助: Excel 列式子项编号，0-based -> "a)" / "b)" ... "z)" / "aa)"。
+String _excel(int n) {
+  final sb = StringBuffer();
+  var x = n;
+  do {
+    sb.writeCharCode(65 + x % 26);
+    x = x ~/ 26 - 1;
+  } while (x >= 0);
+  return '${sb.toString()})';
+}
+
+// Z远程协助: 淡蓝色圆角行号标签（替代纯文字行号）。
+Widget _numBadge(int index) {
+  return Container(
+    width: 30,
+    height: 22,
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: const Color(0xFFE3F2FD),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Text(
+      '${index + 1}',
+      style: const TextStyle(
+        color: Color(0xFF1565C0),
+        fontSize: 12,
+        fontWeight: FontWeight.bold,
+      ),
+    ),
+  );
+}
+
+// Z远程协助: 硬件配置 Tab 的一行（label=标签列，value=值列，group=大类分组，
+// 用于分隔线：同组淡线、不同大类中灰线）。
+class _HwRow {
+  final String label;
+  final String value;
+  final int group;
+  const _HwRow({required this.label, required this.value, required this.group});
 }
 
 /// Full-screen (mobile) / embedded (desktop) tabbed view of the peer's
@@ -73,6 +206,10 @@ class ConfigInfoPage extends StatefulWidget {
 }
 
 class _ConfigInfoPageState extends State<ConfigInfoPage> {
+  // Z远程协助: 桌面子窗口（非 macOS，macOS 有原生标题栏）使用自绘 42px
+  // 标题栏 + 关闭按钮；移动端/其它情况保留默认 AppBar。
+  bool get _useCustomTitleBar => isDesktop && !isMacOS;
+
   @override
   void initState() {
     super.initState();
@@ -97,12 +234,53 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
     super.dispose();
   }
 
+  // Z远程协助: 关闭按钮逻辑参照 terminal_tab_page.dart / multi_window_manager.dart：
+  // 先保存窗口位置，再放开 prevent-close 并关闭当前子窗口。
+  Future<void> _onCloseDesktopWindow() async {
+    if (kWindowId == null) return;
+    try {
+      await saveWindowPosition(WindowType.ConfigInfo, windowId: kWindowId);
+    } catch (_) {}
+    try {
+      await WindowController.fromWindowId(kWindowId!).setPreventClose(false);
+      await WindowController.fromWindowId(kWindowId!).close();
+    } catch (_) {}
+  }
+
+  // Z远程协助: 自绘头部，固定 42px，左侧标题、右侧关闭。
+  Widget _buildCustomTitleBar() {
+    return Container(
+      height: _kConfigTitleBarHeight,
+      color: Theme.of(context).primaryColor,
+      child: Row(
+        children: [
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              '被控端配置信息',
+              style: TextStyle(color: Colors.white, fontSize: 14),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18, color: Colors.white),
+            tooltip: '关闭',
+            onPressed: _onCloseDesktopWindow,
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final customTitleBar = _useCustomTitleBar;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('被控端配置信息'),
-      ),
+      appBar: customTitleBar
+          ? null
+          : AppBar(
+              title: const Text('被控端配置信息'),
+            ),
       body: ChangeNotifierProvider.value(
         value: ConfigInfoController.instance,
         child: Consumer<ConfigInfoController>(
@@ -113,18 +291,20 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
             if (c.error != null) {
               return Center(child: Text(c.error!));
             }
-            return _buildTabs(context, c.data!);
+            return _buildTabs(context, c.data!, customTitleBar);
           },
         ),
       ),
     );
   }
 
-  Widget _buildTabs(BuildContext context, Map<String, dynamic> data) {
+  Widget _buildTabs(
+      BuildContext context, Map<String, dynamic> data, bool customTitleBar) {
     return DefaultTabController(
       length: 4,
       child: Column(
         children: [
+          if (customTitleBar) _buildCustomTitleBar(),
           const TabBar(
             labelColor: Colors.blue,
             tabs: [
@@ -138,20 +318,27 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
             child: TabBarView(
               children: [
                 _hardwareTab(data),
-                _listTab(
+                _ListTabView(
                   rows: _userRows(data['users']),
                   columns: const ['名称', '全名', '管理员'],
                   emptyText: '暂不支持',
+                  kind: 'user',
                 ),
-                _listTab(
+                _ListTabView(
                   rows: _rows(data['software'], ['name', 'version', 'publisher']),
                   columns: const ['名称', '版本', '发布者'],
                   emptyText: '暂不支持',
+                  paginated: true,
+                  searchable: true,
+                  kind: 'software',
                 ),
-                _listTab(
+                _ListTabView(
                   rows: _rows(data['services'], ['name', 'status', 'start_type']),
                   columns: const ['名称', '状态', '启动类型'],
                   emptyText: '暂不支持',
+                  paginated: true,
+                  searchable: true,
+                  kind: 'service',
                 ),
               ],
             ),
@@ -191,117 +378,520 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
     return out;
   }
 
-  String _unknown(String s) => s.isEmpty ? '未知' : s;
-
+  // Z远程协助: 硬件配置 Tab。固定显示顺序：
+  // 操作系统 -> 厂家型号 -> 主板 -> CPU -> 内存 -> 硬盘 -> 显卡 -> 分辨率 -> 网卡。
+  // 任一字段取不到（空串 / 0 / 缺失）时整行隐藏，不显示"未知"。
   Widget _hardwareTab(Map<String, dynamic> data) {
-    final os = (data['os'] as Map?) ?? {};
-    final cpu = (data['cpu'] as Map?) ?? {};
-    final mem = (data['memory'] as Map?) ?? {};
-    final disk = (data['disk'] as Map?) ?? {};
-    final board = (data['board'] as Map?) ?? {};
+    final os = (data['os'] as Map?) ?? const {};
+    final machine = (data['machine'] as Map?) ?? const {};
+    final board = (data['board'] as Map?) ?? const {};
+    final cpu = (data['cpu'] as Map?) ?? const {};
+    final mem = (data['memory'] as Map?) ?? const {};
+    final disk = (data['disk'] as Map?) ?? const {};
 
-    String osLine() {
-      final parts = [
-        os['name']?.toString() ?? '',
-        os['version']?.toString() ?? '',
-        os['arch']?.toString() ?? '',
-      ].where((s) => s.isNotEmpty).join(' ');
-      return _unknown(parts);
+    final rows = <_HwRow>[];
+
+    // group 0: 操作系统
+    final osParts = [
+      os['name']?.toString() ?? '',
+      os['version']?.toString() ?? '',
+      os['arch']?.toString() ?? '',
+    ].where((s) => s.isNotEmpty).join(' ');
+    if (osParts.isNotEmpty) {
+      rows.add(_HwRow(label: '操作系统', value: osParts, group: 0));
     }
 
-    String cpuLine() {
-      final parts = <String>[
-        cpu['model']?.toString() ?? '',
-      ].where((s) => s.isNotEmpty).toList();
-      final cores = (cpu['cores'] ?? 0);
-      final threads = (cpu['threads'] ?? 0);
-      final freq = (cpu['freq_mhz'] ?? 0);
-      final detail = '核心:$cores 线程:$threads 主频:${freq}MHz';
-      parts.add(detail);
-      return _unknown(parts.join(' / '));
+    // group 1: 厂家型号（machine.vendor / machine.model）
+    {
+      final v = machine['vendor']?.toString() ?? '';
+      final m = machine['model']?.toString() ?? '';
+      final value = [v, m].where((s) => s.isNotEmpty).join(' / ');
+      if (value.isNotEmpty) {
+        rows.add(_HwRow(label: '厂家型号', value: value, group: 1));
+      }
     }
 
-    String memLine() =>
-        '总:${(mem['total_gb'] ?? 0.0)}GB 可用:${(mem['available_gb'] ?? 0.0)}GB';
-    String diskLine() =>
-        '总:${(disk['total_gb'] ?? 0.0)}GB 剩余:${(disk['free_gb'] ?? 0.0)}GB';
+    // group 2: 主板（厂商 / 型号，serial 非空追加序列号）
+    {
+      final vendor = board['vendor']?.toString() ?? '';
+      final model = board['model']?.toString() ?? '';
+      final serial = board['serial']?.toString() ?? '';
+      if (vendor.isNotEmpty || model.isNotEmpty || serial.isNotEmpty) {
+        var value = [vendor, model].where((s) => s.isNotEmpty).join(' / ');
+        if (serial.isNotEmpty) value += ' 序列号:$serial';
+        rows.add(_HwRow(label: '主板', value: value, group: 2));
+      }
+    }
 
-    final rows = <String>[
-      osLine(),
-      cpuLine(),
-      memLine(),
-      diskLine(),
-      _unknown(data['gpu']?.toString() ?? ''),
-      _unknown([
-        board['vendor']?.toString() ?? '',
-        board['model']?.toString() ?? '',
-      ].where((s) => s.isNotEmpty).join(' / ')),
-      _unknown(data['screen']?.toString() ?? ''),
-      _unknown(data['uptime']?.toString() ?? ''),
-    ];
+    // group 3: CPU（cores 为 0 时只显示线程数；freq_mhz 为 0 时不显示主频）
+    {
+      final model = cpu['model']?.toString() ?? '';
+      final cores = _toInt(cpu['cores']);
+      final threads = _toInt(cpu['threads']);
+      final freq = _toGb(cpu['freq_mhz']);
+      if (model.isNotEmpty || cores > 0 || threads > 0 || freq > 0) {
+        final detail = <String>[];
+        if (cores > 0) detail.add('核心:$cores');
+        detail.add('线程:$threads');
+        if (freq > 0) detail.add('主频:${freq.toStringAsFixed(0)}MHz');
+        final value = [
+          model,
+          detail.join(' '),
+        ].where((s) => s.isNotEmpty).join(' / ');
+        rows.add(_HwRow(label: 'CPU', value: value, group: 3));
+      }
+    }
 
+    // group 4: 内存（总/剩余必显示，已用>0 才显示，brand 非空追加品牌）
+    {
+      final total = _toGb(mem['total_gb']);
+      final used = _toGb(mem['used_gb']);
+      final avail = _toGb(mem['available_gb']);
+      final brand = mem['brand']?.toString() ?? '';
+      if (total > 0 || used > 0 || avail > 0 || brand.isNotEmpty) {
+        final parts = <String>[];
+        if (total > 0) parts.add('总:${_fmtGb(total)}GB');
+        if (avail > 0) parts.add('剩余:${_fmtGb(avail)}GB');
+        if (used > 0) parts.add('已用:${_fmtGb(used)}GB');
+        var value = parts.join(' ');
+        if (brand.isNotEmpty) value += ' (品牌:$brand)';
+        rows.add(_HwRow(label: '内存', value: value, group: 4));
+      }
+    }
+
+    // group 5: 硬盘（每块物理磁盘一行 + 其分区子行；兼容旧格式平铺 partitions）
+    {
+      final disks = disk['disks'];
+      if (disks is List && disks.isNotEmpty) {
+        final multiDisk = disks.length > 1;
+        var dIdx = 0;
+        for (final d in disks) {
+          if (d is! Map) continue;
+          final dName = d['name']?.toString() ?? '';
+          final dModel = d['model']?.toString() ?? '';
+          final dTotal = _toGb(d['total_gb']);
+          final dFree = _toGb(d['free_gb']);
+          final head = <String>[];
+          if (dName.isNotEmpty) head.add(dName);
+          if (dModel.isNotEmpty) head.add('型号:$dModel');
+          final headStr = head.length > 1 ? '${head[0]} (${head[1]})' : head.join();
+          final segs = <String>[];
+          if (headStr.isNotEmpty) segs.add(headStr);
+          if (dTotal > 0) segs.add('总:${_fmtGb(dTotal)}GB');
+          if (dFree > 0) segs.add('剩余:${_fmtGb(dFree)}GB');
+          if (segs.isEmpty) continue;
+          var value = segs.join(' ');
+          if (multiDisk) value = '${_excel(dIdx)} $value';
+          rows.add(_HwRow(label: '硬盘', value: value, group: 5));
+          dIdx++;
+          // 该盘的分区子行
+          final partsList = d['partitions'];
+          if (partsList is List && partsList.isNotEmpty) {
+            final multiPart = partsList.length > 1;
+            var pIdx = 0;
+            for (final p in partsList) {
+              if (p is! Map) continue;
+              final pName = p['name']?.toString() ?? '';
+              final pLabel = p['label']?.toString() ?? '';
+              final pTotal = _toGb(p['total_gb']);
+              final pFree = _toGb(p['free_gb']);
+              if (pName.isEmpty && pTotal <= 0 && pFree <= 0) continue;
+              var value = pLabel.isNotEmpty ? '$pName ($pLabel)' : pName;
+              final segs2 = <String>[];
+              if (pTotal > 0) segs2.add('总:${_fmtGb(pTotal)}GB');
+              if (pFree > 0) segs2.add('剩余:${_fmtGb(pFree)}GB');
+              if (segs2.isNotEmpty) value += ' ${segs2.join(' ')}';
+              if (multiPart) value = '${_excel(pIdx)} $value';
+              rows.add(_HwRow(label: '分区', value: value.trim(), group: 5));
+              pIdx++;
+            }
+          }
+        }
+      } else {
+        // 旧格式回退：顶层汇总行 + 平铺 partitions。
+        final total = _toGb(disk['total_gb']);
+        final used = _toGb(disk['used_gb']);
+        final free = _toGb(disk['free_gb']);
+        final summary = <String>[];
+        if (total > 0) summary.add('总:${_fmtGb(total)}GB');
+        if (used > 0) summary.add('已用:${_fmtGb(used)}GB');
+        if (free > 0) summary.add('剩余:${_fmtGb(free)}GB');
+        if (summary.isNotEmpty) {
+          rows.add(_HwRow(label: '硬盘', value: summary.join(' '), group: 5));
+        }
+        final partitions = disk['partitions'];
+        if (partitions is List && partitions.isNotEmpty) {
+          final multiPart = partitions.length > 1;
+          var pIdx = 0;
+          for (final p in partitions) {
+            if (p is! Map) continue;
+            final pName = p['name']?.toString() ?? '';
+            final pLabel = p['label']?.toString() ?? '';
+            final pTotal = _toGb(p['total_gb']);
+            final pFree = _toGb(p['free_gb']);
+            if (pName.isEmpty && pTotal <= 0 && pFree <= 0) continue;
+            var value = pLabel.isNotEmpty ? '$pName ($pLabel)' : pName;
+            final segs2 = <String>[];
+            if (pTotal > 0) segs2.add('总:${_fmtGb(pTotal)}GB');
+            if (pFree > 0) segs2.add('剩余:${_fmtGb(pFree)}GB');
+            if (segs2.isNotEmpty) value += ' ${segs2.join(' ')}';
+            if (multiPart) value = '${_excel(pIdx)} $value';
+            rows.add(_HwRow(label: '分区', value: value.trim(), group: 5));
+            pIdx++;
+          }
+        }
+      }
+    }
+
+    // group 6: 显卡（字符串非空才显示）
+    final gpu = data['gpu']?.toString() ?? '';
+    if (gpu.isNotEmpty) rows.add(_HwRow(label: '显卡', value: gpu, group: 6));
+
+    // group 7: 分辨率（原"屏幕"行改名，字符串非空才显示）
+    final screen = data['screen']?.toString() ?? '';
+    if (screen.isNotEmpty) rows.add(_HwRow(label: '分辨率', value: screen, group: 7));
+
+    // group 8: 网卡（data.net[]；缺失/空数组则整组不显示）
+    {
+      final nets = data['net'];
+      if (nets is List && nets.isNotEmpty) {
+        final multi = nets.length > 1;
+        var nIdx = 0;
+        for (final n in nets) {
+          if (n is! Map) continue;
+          final name = n['name']?.toString() ?? '';
+          final mac = n['mac']?.toString() ?? '';
+          final ip = n['ip']?.toString() ?? '';
+          final rx = _toGb(n['rx_kbps']);
+          final tx = _toGb(n['tx_kbps']);
+          final left = <String>[];
+          if (name.isNotEmpty) left.add(name);
+          if (mac.isNotEmpty) left.add('($mac)');
+          if (ip.isNotEmpty) left.add(ip);
+          var value = left.join(' ');
+          final speed = <String>[];
+          if (tx > 0) speed.add('上传:${tx.toStringAsFixed(0)} KB/s');
+          if (rx > 0) speed.add('下载:${rx.toStringAsFixed(0)} KB/s');
+          if (speed.isNotEmpty) value += ' — ${speed.join(' ')}';
+          if (value.isEmpty) continue;
+          if (multi) value = '${_excel(nIdx)} $value';
+          rows.add(_HwRow(label: '网卡', value: value, group: 8));
+          nIdx++;
+        }
+      }
+    }
+
+    // 空 JSON（data 为 {}）时整体显示"暂不支持"。
+    if (rows.isEmpty) {
+      return const Center(child: Text('暂不支持'));
+    }
     return ListView.separated(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
       itemCount: rows.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
+      separatorBuilder: (context, i) {
+        // 同组子行淡线；不同大类中灰线。
+        if (rows[i].group == rows[i + 1].group) {
+          return const Divider(height: 1, color: Color(0xFFF0F0F0));
+        }
+        return const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0));
+      },
       itemBuilder: (context, i) {
+        final e = rows[i];
         return ListTile(
           dense: true,
-          leading: SizedBox(
-            width: 28,
-            child: Text(
-              '${i + 1}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          leading: _numBadge(i),
+          title: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 100,
+                child: Text(
+                  e.label,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1565C0),
+                  ),
+                ),
+              ),
+              Expanded(child: Text(e.value)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// Z远程协助: 用户/软件/服务 列表 Tab。paginated=true 时按 _kConfigPageSize
+// 分页，行号用全局序号（page*100+i+1），第 2 页第一行为 101；a)/b)/c)
+// 子项编号在分页 Tab 中每页从 a) 重置，用户 Tab 连续编号。searchable=true 时
+// 顶部显示搜索框，过滤后再分页；kind=software/service 行支持长按弹出操作面板。
+class _ListTabView extends StatefulWidget {
+  final List<List<String>> rows;
+  final List<String> columns;
+  final String emptyText;
+  final bool paginated;
+  final bool searchable;
+  final String kind; // 'user' | 'software' | 'service'
+
+  const _ListTabView({
+    required this.rows,
+    required this.columns,
+    required this.emptyText,
+    required this.kind,
+    this.paginated = false,
+    this.searchable = false,
+  });
+
+  @override
+  State<_ListTabView> createState() => _ListTabViewState();
+}
+
+class _ListTabViewState extends State<_ListTabView> {
+  int _page = 0;
+  String _keyword = '';
+
+  @override
+  void didUpdateWidget(covariant _ListTabView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 数据刷新后把当前页收敛到合法范围内。
+    final maxPage = (widget.rows.length / _kConfigPageSize).ceil() - 1;
+    if (maxPage < 0) {
+      _page = 0;
+    } else if (_page > maxPage) {
+      _page = maxPage;
+    }
+  }
+
+  // Z远程协助: 按关键字过滤（名称/版本/发布者 或 名称/状态/启动类型 子串，
+  // 大小写不敏感）。
+  List<List<String>> get _filtered {
+    final kw = _keyword.trim().toLowerCase();
+    if (kw.isEmpty) return widget.rows;
+    return widget.rows
+        .where((cells) => cells.any((c) => c.toLowerCase().contains(kw)))
+        .toList();
+  }
+
+  Widget _buildRow(List<String> cells, int globalIndex, int letterIndex) {
+    var title = cells.isEmpty
+        ? ''
+        : cells.asMap().entries.map((e) {
+            final col =
+                e.key < widget.columns.length ? widget.columns[e.key] : '';
+            return '$col: ${e.value.isEmpty ? '未知' : e.value}';
+          }).join('\n');
+    title = '${_excel(letterIndex)} $title';
+    return ListTile(
+      dense: true,
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      leading: _numBadge(globalIndex),
+      title: Text(title),
+      onLongPress: (widget.kind == 'user')
+          ? null
+          : () => _openOpSheet(cells),
+    );
+  }
+
+  // Z远程协助: 长按操作面板。软件 -> 卸载；服务按 status 给出停/启用。
+  void _openOpSheet(List<String> cells) {
+    final name = cells.isEmpty ? '' : cells[0];
+    final status = cells.length > 1 ? cells[1].toLowerCase() : '';
+    final isRunning = status.contains('running');
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(16),
+          child: ChangeNotifierProvider.value(
+            value: ConfigInfoController.instance,
+            child: Consumer<ConfigInfoController>(
+              builder: (context, c, _) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      name.isEmpty ? '操作' : name,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    if (c.opPending)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text('操作中...',
+                            style: TextStyle(color: Colors.blue)),
+                      ),
+                    if (c.opResultMessage != null && !c.opPending)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          c.opResultMessage!,
+                          style: TextStyle(
+                              color: c.opResultMessage!.contains('权限')
+                                  ? Colors.red
+                                  : Colors.green),
+                        ),
+                      ),
+                    if (c.opResultMessage != null &&
+                        c.opResultMessage!.contains('权限'))
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 8),
+                        child: Text('需要管理员权限',
+                            style: TextStyle(
+                                color: Colors.red,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                    if (widget.kind == 'software')
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red),
+                        onPressed: c.opPending
+                            ? null
+                            : () => ConfigInfoController.instance
+                                .sendOp({'op': 'uninstall', 'name': name}),
+                        child: const Text('卸载',
+                            style: TextStyle(color: Colors.white)),
+                      ),
+                    if (widget.kind == 'service')
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor:
+                                isRunning ? Colors.orange : Colors.green),
+                        onPressed: c.opPending
+                            ? null
+                            : () => ConfigInfoController.instance.sendOp({
+                                  'op': isRunning ? 'service_stop' : 'service_start',
+                                  'name': name,
+                                }),
+                        child: Text(
+                          isRunning ? '停用' : '启用',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('关闭'),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
-          title: Text(rows[i]),
         );
       },
     );
   }
 
-  Widget _listTab({
-    required List<List<String>> rows,
-    required List<String> columns,
-    required String emptyText,
-  }) {
-    if (rows.isEmpty) {
-      return Center(child: Text(emptyText));
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filtered;
+    // 搜索框（仅 searchable Tab）。
+    final searchBox = widget.searchable
+        ? Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: TextField(
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '搜索...',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                suffixIcon: _keyword.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () => setState(() {
+                          _keyword = '';
+                          _page = 0;
+                        }),
+                      ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              onChanged: (v) => setState(() {
+                _keyword = v;
+                _page = 0;
+              }),
+            ),
+          )
+        : null;
+
+    if (filtered.isEmpty) {
+      return Column(
+        children: [
+          if (searchBox != null) searchBox,
+          Expanded(
+            child: Center(
+              child: Text(_keyword.trim().isEmpty
+                  ? widget.emptyText
+                  : '无匹配结果'),
+            ),
+          ),
+        ],
+      );
     }
+    // 不分页（用户列表）：一次性展示，底部"共 N 条"。
+    if (!widget.paginated) {
+      return Column(
+        children: [
+          if (searchBox != null) searchBox,
+          Expanded(
+            child: ListView.separated(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              itemCount: filtered.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, i) => _buildRow(filtered[i], i, i),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text('共 ${filtered.length} 条'),
+          ),
+        ],
+      );
+    }
+    // 分页（已安装软件 / 服务列表）：每页 100 条，底部翻页控件。
+    final total = filtered.length;
+    final totalPages = (total / _kConfigPageSize).ceil();
+    if (_page >= totalPages) _page = totalPages - 1;
+    final start = _page * _kConfigPageSize;
+    final end = (start + _kConfigPageSize) > total ? total : start + _kConfigPageSize;
+    final visible = filtered.sublist(start, end);
     return Column(
       children: [
+        if (searchBox != null) searchBox,
         Expanded(
           child: ListView.separated(
-            padding: const EdgeInsets.all(12),
-            itemCount: rows.length,
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+            itemCount: visible.length,
             separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, i) {
-              final cells = rows[i];
-              final title = cells.isEmpty
-                  ? ''
-                  : cells
-                      .asMap()
-                      .entries
-                      .map((e) =>
-                          '${columns[e.key]}: ${e.value.isEmpty ? '未知' : e.value}')
-                      .join('\n');
-              return ListTile(
-                dense: true,
-                leading: SizedBox(
-                  width: 28,
-                  child: Text(
-                    '${i + 1}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                title: Text(title),
-              );
-            },
+            itemBuilder: (context, i) => _buildRow(visible[i], start + i, i),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text('共 ${rows.length} 条'),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TextButton(
+                onPressed: _page > 0
+                    ? () => setState(() => _page--)
+                    : null,
+                child: const Text('上一页'),
+              ),
+              Text('第 ${_page + 1} / $totalPages 页（共 $total 条）'),
+              TextButton(
+                onPressed: _page < totalPages - 1
+                    ? () => setState(() => _page++)
+                    : null,
+                child: const Text('下一页'),
+              ),
+            ],
+          ),
         ),
       ],
     );

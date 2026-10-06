@@ -26,6 +26,9 @@ pub mod gtk_sudo;
 // Z远程协助: one-shot hardware/software info collection.
 pub mod hardware;
 
+// Z远程协助: config-info operation pipeline (uninstall / service start-stop / refresh).
+pub mod hardware_ops;
+
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use base::message_proto::CursorData;
 #[cfg(all(

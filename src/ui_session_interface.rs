@@ -817,6 +817,21 @@ impl<T: InvokeUiSession> Session<T> {
         self.send(Data::Message(msg_out));
     }
 
+    // Z远程协助: send a config-info operation command (uninstall / service start-stop /
+    // refresh) to the controlled peer over the existing config-info MessageBox channel.
+    pub fn send_config_op(&self, json: String) {
+        let mb = MessageBox {
+            msgtype: "zremote66-config-op".to_owned(),
+            title: "Z远程协助".to_owned(),
+            text: json,
+            link: "".to_owned(),
+            ..Default::default()
+        };
+        let mut msg_out = Message::new();
+        msg_out.set_message_box(mb);
+        self.send(Data::Message(msg_out));
+    }
+
     pub fn resize_terminal(&self, terminal_id: i32, rows: u32, cols: u32) {
         let mut action = TerminalAction::new();
         action.set_resize(ResizeTerminal {
