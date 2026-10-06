@@ -2658,8 +2658,9 @@ connect(BuildContext context, String id,
         final reuseSid = await bind.mainGetEstablishedSession(peerId: id);
         if (reuseSid.isNotEmpty) {
           await rustDeskWinManager.newConfigInfo(id, waitForData: true);
+          // Z远程协助: uuid 3.x 的 UuidValue 是 factory UuidValue(String)（非 fromString）。
           await bind.sessionSendConfigOp(
-              sessionId: UuidValue.fromString(reuseSid),
+              sessionId: UuidValue(reuseSid),
               json: '{"op":"refresh"}');
           return;
         }
@@ -2770,7 +2771,7 @@ connect(BuildContext context, String id,
           ),
         );
         await bind.sessionSendConfigOp(
-            sessionId: UuidValue.fromString(reuseSid),
+            sessionId: UuidValue(reuseSid),
             json: '{"op":"refresh"}');
         return;
       }

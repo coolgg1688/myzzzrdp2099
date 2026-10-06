@@ -748,7 +748,7 @@ pub fn main_get_established_session(peer_id: String) -> String {
     {
         if let Some(id) = sessions::get_established_session_id(
             &peer_id,
-            ConnType::DEFAULT,
+            ConnType::DEFAULT_CONN,
         ) {
             return id.to_string();
         }
