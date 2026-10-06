@@ -83,6 +83,9 @@ const String kWindowEventSetFullscreen = "set_fullscreen";
 const String kWindowEventMoveTabToNewWindow = "move_tab_to_new_window";
 const String kWindowEventGetCachedSessionData = "get_cached_session_data";
 const String kWindowEventOpenMonitorSession = "open_monitor_session";
+// Z远程协助: 主窗口把被控端回传的配置信息/操作结果转发给配置信息子窗口的事件名。
+// arguments 为 JSON 字符串 {"type": "zremote66-config-info" | "zremote66-config-op-result", "text": "..."}。
+const String kWindowEventConfigInfoData = "config_info_data";
 
 const String kOptionViewStyle = "view_style";
 const String kOptionScrollStyle = "scroll_style";

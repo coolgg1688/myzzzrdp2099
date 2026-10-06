@@ -789,6 +789,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         await rustDeskWinManager.registerActiveWindow(call.arguments["id"]);
       } else if (call.method == kWindowEventHide) {
         await rustDeskWinManager.unregisterActiveWindow(call.arguments['id']);
+      } else if (call.method == kWindowEventConfigInfoData) {
+        // Z远程协助: 主窗口收到「其它桌面 isolate」转发来的配置信息数据，广播给配置信息子窗口。
+        return await rustDeskWinManager.forwardToConfigInfoWindows(call.arguments);
       } else if (call.method == kWindowConnect) {
         await connectMainDesktop(
           call.arguments['id'],

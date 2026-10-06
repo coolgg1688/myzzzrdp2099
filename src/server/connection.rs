@@ -3262,10 +3262,10 @@ impl Connection {
                     }
                     self.update_auto_disconnect_timer();
                 }
-                // Z远程协助: act on config-info operation requests only inside a config_info
-                // session. All other MessageBox messages from the peer stay ignored.
+                // Z远程协助: zremote66 配置操作请求在任意已认证会话中生效（config_info 会话 + 普通已认证 remote 会话），
+                // 未认证连接一律忽略。支持主控端在已有已认证会话时直接要求被控端上报配置。
                 Some(message::Union::MessageBox(mb)) => {
-                    if self.config_info && mb.msgtype == "zremote66-config-op" {
+                    if self.authorized && mb.msgtype == "zremote66-config-op" {
                         let text = mb.text.clone();
                         let mut inner = self.inner.clone();
                         tokio::spawn(async move {

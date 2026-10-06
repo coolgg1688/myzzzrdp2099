@@ -741,6 +741,21 @@ pub fn session_peer_option(session_id: SessionID, name: String, value: String) {
     }
 }
 
+// Z远程协助: 供「查看配置信息」查询某 peer 是否已有已建立（已认证且连接建立）的默认 remote 会话，
+// 返回其 session id 字符串，无则返回空串。仅 viewer 侧使用，不主动上线。
+pub fn main_get_established_session(peer_id: String) -> String {
+    #[cfg(feature = "flutter")]
+    {
+        if let Some(id) = sessions::get_established_session_id(
+            &peer_id,
+            ConnType::DEFAULT,
+        ) {
+            return id.to_string();
+        }
+    }
+    "".to_owned()
+}
+
 // Z远程协助: send a config-info operation command to the controlled peer of this session.
 pub fn session_send_config_op(session_id: SessionID, json: String) {
     if let Some(session) = sessions::get_session_by_session_id(&session_id) {

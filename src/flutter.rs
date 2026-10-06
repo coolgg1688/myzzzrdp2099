@@ -2075,6 +2075,23 @@ pub mod sessions {
         SESSIONS.read().unwrap().get(&(peer_id, conn_type)).cloned()
     }
 
+    /// Z远程协助: 获取指定 peer 已建立（已认证且连接已连接）会话的 session id，供「查看配置信息」复用已有已认证会话而非重新登录。
+    /// 返回第一个 session handler 的 id；若无已连接会话则返回 None。
+    pub fn get_established_session_id(peer_id: &str, conn_type: ConnType) -> Option<SessionID> {
+        let sessions = SESSIONS.read().unwrap();
+        let s = sessions.get(&(peer_id.to_owned(), conn_type))?;
+        if !s.connection_round_state.lock().unwrap().is_connected() {
+            return None;
+        }
+        s.ui_handler
+            .session_handlers
+            .read()
+            .unwrap()
+            .keys()
+            .next()
+            .cloned()
+    }
+
     #[inline]
     pub fn remove_session_by_session_id(id: &SessionID) -> Option<FlutterSession> {
         let mut remove_peer_key = None;

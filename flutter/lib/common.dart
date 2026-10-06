@@ -1186,11 +1186,37 @@ void msgBox(SessionID sessionId, String type, String title, String text,
     int? reconnectTimeout,
     VoidCallback? onSubmit,
     int? submitTimeout}) {
-  // Z远程协助: the peer's config info is pushed back as a MessageBox. Route the
-  // JSON payload to the config-info page instead of showing a dialog.
-  if (type == 'zremote66-config-info') {
+  // Z远程协助: 配置信息 / 操作结果回传统一路由（与 model.dart handleMsgBox 行为一致）：
+  // 1) 本 isolate 就是配置信息窗口（DesktopType.configInfo）：直接刷新页面；
+  // 2) 其它桌面 isolate（主窗口/远程窗口等持有会话者）：转发给主窗口，由主窗口广播给配置信息子窗口；
+  // 3) 移动端/网页：配置页面与 msgBox 同 isolate，数据直达。
+  if (type == 'zremote66-config-info' || type == 'zremote66-config-op-result') {
     dialogManager.dismissAll();
-    ConfigInfoController.instance.update(text);
+    if (desktopType == DesktopType.configInfo) {
+      if (type == 'zremote66-config-info') {
+        ConfigInfoController.instance.update(text);
+      } else {
+        ConfigInfoController.instance.onOpResult(text);
+      }
+      return;
+    }
+    if (isDesktop) {
+      if (desktopType == DesktopType.main) {
+        // Z远程协助: 主窗口 isolate 自己持有会话，直接广播给配置信息子窗口，
+        // 避免对自身 windowId 的 invokeMethod 自调用（插件 self-invoke 行为不可靠）。
+        unawaited(rustDeskWinManager.forwardToConfigInfoWindows(
+            jsonEncode({'type': type, 'text': text})));
+      } else {
+        unawaited(rustDeskWinManager.call(WindowType.Main, kWindowEventConfigInfoData,
+            jsonEncode({'type': type, 'text': text})));
+      }
+      return;
+    }
+    if (type == 'zremote66-config-info') {
+      ConfigInfoController.instance.update(text);
+    } else {
+      ConfigInfoController.instance.onOpResult(text);
+    }
     return;
   }
   dialogManager.dismissAll();
@@ -2625,6 +2651,19 @@ connect(BuildContext context, String id,
 
   if (isDesktop) {
     if (desktopType == DesktopType.main) {
+      // Z远程协助: 主控端已通过密码验证且已与该 peer 建立连接时，打开「查看配置信息」
+      // 不再二次验证——复用已有会话：开 waitForData 子窗口（不发起新 LoginRequest），
+      // 再通过该已认证会话要求被控端上报配置。
+      if (isConfigInfo) {
+        final reuseSid = await bind.mainGetEstablishedSession(peerId: id);
+        if (reuseSid.isNotEmpty) {
+          await rustDeskWinManager.newConfigInfo(id, waitForData: true);
+          await bind.sessionSendConfigOp(
+              sessionId: UuidValue.fromString(reuseSid),
+              json: '{"op":"refresh"}');
+          return;
+        }
+      }
       await connectMainDesktop(
         id,
         isFileTransfer: isFileTransfer,
@@ -2717,6 +2756,24 @@ connect(BuildContext context, String id,
         ),
       );
     } else if (isConfigInfo) {
+      // Z远程协助: 移动端先尝试复用已有认证会话，避免二次验证；复用成功则开 waitForData
+      // 页面（不发起新连接，页面与已有会话同 isolate，msgBox 直达 update），再通过已有会话拉取配置。
+      final reuseSid = await bind.mainGetEstablishedSession(peerId: id);
+      if (reuseSid.isNotEmpty) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (BuildContext context) => ConfigInfoPage(
+              id: id,
+              waitForData: true,
+            ),
+          ),
+        );
+        await bind.sessionSendConfigOp(
+            sessionId: UuidValue.fromString(reuseSid),
+            json: '{"op":"refresh"}');
+        return;
+      }
       // Z远程协助: full-screen config info page on mobile.
       Navigator.push(
         context,

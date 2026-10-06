@@ -214,6 +214,9 @@ class ConfigInfoPage extends StatefulWidget {
   final String? password;
   final bool? isSharedPassword;
   final bool? forceRelay;
+  // Z远程协助: true 表示主控端已持有该 peer 的认证会话（密码已通过），
+  // 本页不发起新的 LoginRequest，仅等待主窗口转发被控端回传的配置数据。
+  final bool waitForData;
 
   const ConfigInfoPage({
     Key? key,
@@ -221,6 +224,7 @@ class ConfigInfoPage extends StatefulWidget {
     this.password,
     this.isSharedPassword,
     this.forceRelay,
+    this.waitForData = false,
   }) : super(key: key);
 
   @override
@@ -236,35 +240,49 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
   void initState() {
     super.initState();
     ConfigInfoController.instance.reset();
-    gFFI.ffiModel.updateEventListener(gFFI.sessionId, widget.id);
-    gFFI.start(
-      widget.id,
-      isConfigInfo: true,
-      password: widget.password,
-      isSharedPassword: widget.isSharedPassword,
-      forceRelay: widget.forceRelay,
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      gFFI.dialogManager.showLoading('正在连接被控端...', onCancel: () {
-        gFFI.close();
-      });
-    });
+    // Z远程协助: waitForData 复用模式下不发起新连接——会话属于主窗口 isolate，
+    // 这里只保持 loading，等待主窗口通过 kWindowEventConfigInfoData 转发数据。
+    if (!widget.waitForData) {
+      gFFI.ffiModel.updateEventListener(gFFI.sessionId, widget.id);
+      gFFI.start(
+        widget.id,
+        isConfigInfo: true,
+        password: widget.password,
+        isSharedPassword: widget.isSharedPassword,
+        forceRelay: widget.forceRelay,
+      );
+    }
+    // Z远程协助: 删除全屏模态 showLoading——它会盖住自绘标题栏关闭按钮，
+    // 连接卡住（密码验证/离线重试）时用户点不到关闭、窗口关不掉。
+    // loading 状态由 build 里的 Consumer(c.loading) 展示，窗口任何时刻可交互。
   }
 
   @override
   void dispose() {
     super.dispose();
+    // Z远程协助: 非复用模式下本页自己发起了会话，释放之；复用模式下会话属于主窗口
+    // isolate，本页只读复用，不能 close。
+    if (!widget.waitForData) {
+      gFFI.close();
+    }
   }
 
-  // Z远程协助: 关闭按钮逻辑参照 terminal_tab_page.dart / multi_window_manager.dart：
-  // 先保存窗口位置，再放开 prevent-close 并关闭当前子窗口。
+  // Z远程协助: 关闭按钮逻辑健壮化——任一步失败都不阻断后续步骤，保证窗口最终能关掉；
+  // kWindowId 为 null 时降级直接释放本页会话。
   Future<void> _onCloseDesktopWindow() async {
-    if (kWindowId == null) return;
+    if (kWindowId == null) {
+      gFFI.close();
+      return;
+    }
     try {
       await saveWindowPosition(WindowType.ConfigInfo, windowId: kWindowId);
-    } catch (_) {}
+    } catch (_) {
+      // 保存窗口位置失败可容忍，不影响关闭流程。
+    }
     try {
       await WindowController.fromWindowId(kWindowId!).setPreventClose(false);
+    } catch (_) {}
+    try {
       await WindowController.fromWindowId(kWindowId!).close();
     } catch (_) {}
   }

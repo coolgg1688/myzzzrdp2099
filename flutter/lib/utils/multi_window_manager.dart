@@ -389,18 +389,27 @@ class RustDeskMultiWindowManager {
     return MultiWindowCallResult(windowId, null);
   }
 
-  // Z远程协助: open a resizable independent window for the peer's config info.
+  // Z远程协助: 打开/复用一个独立可调大小的配置信息子窗口。
+  // waitForData=true 表示主控端已有该 peer 的认证会话（密码已通过），
+  // 子窗口不再发起新的 LoginRequest，仅等待主窗口通过 kWindowEventConfigInfoData 转发数据。
   Future<MultiWindowCallResult> newConfigInfo(
     String remoteId, {
     String? password,
     bool? isSharedPassword,
     bool? forceRelay,
     String? connToken,
+    bool waitForData = false,
   }) async {
-    for (final windowId in _configInfoWindows.reversed) {
-      if (await DesktopMultiWindow.invokeMethod(
-          windowId, kWindowEventActiveSession, remoteId)) {
-        return MultiWindowCallResult(windowId, null);
+    // Z远程协助: 逆序复用已存在的配置信息窗口；对已关闭但残留的 windowId 做容错清理，
+    // 避免 invokeMethod 抛 MissingPluginException/PlatformException 导致菜单点击无响应。
+    for (final windowId in _configInfoWindows.reversed.toList()) {
+      try {
+        if (await DesktopMultiWindow.invokeMethod(
+            windowId, kWindowEventActiveSession, remoteId)) {
+          return MultiWindowCallResult(windowId, null);
+        }
+      } catch (_) {
+        _configInfoWindows.remove(windowId);
       }
     }
     var params = {
@@ -410,11 +419,29 @@ class RustDeskMultiWindowManager {
       "forceRelay": forceRelay,
       "isSharedPassword": isSharedPassword,
       "connToken": connToken,
+      // Z远程协助: waitForData=true 时子窗口不发起新连接，仅复用已有会话的数据通道。
+      "waitForData": waitForData,
     };
     final msg = jsonEncode(params);
     final windowId = await newSessionWindow(
         WindowType.ConfigInfo, remoteId, msg, _configInfoWindows, false);
     return MultiWindowCallResult(windowId, null);
+  }
+
+  // Z远程协助: 返回当前所有配置信息子窗口 id 的只读副本，供主窗口把被控端回传的数据广播给它们。
+  List<int> getConfigInfoWindows() => List.of(_configInfoWindows);
+
+  // Z远程协助: 把被控端回传的配置信息/操作结果 JSON 广播给所有配置信息子窗口；
+  // 逆序尝试，任一窗口成功送达即返回 true。供主窗口 isolate 直接调用（避免对自身
+  // windowId 的 invokeMethod 自调用，desktop_multi_window 插件对 self-invoke 行为不可靠）。
+  Future<bool> forwardToConfigInfoWindows(dynamic args) async {
+    for (final wId in _configInfoWindows.reversed.toList()) {
+      try {
+        await DesktopMultiWindow.invokeMethod(wId, kWindowEventConfigInfoData, args);
+        return true;
+      } catch (_) {}
+    }
+    return false;
   }
 
   Future<MultiWindowCallResult> call(

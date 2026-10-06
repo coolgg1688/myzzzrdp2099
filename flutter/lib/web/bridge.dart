@@ -210,6 +210,12 @@ class RustdeskImpl {
     throw UnimplementedError("sessionSendConfigOp");
   }
 
+  // Z远程协助: web v1 客户端不复用桌面会话，恒返回空串，使 connect() 走原有「新建会话」流程。
+  Future<String> mainGetEstablishedSession(
+      {required String peerId, dynamic hint}) {
+    return Future(() => '');
+  }
+
   Future<void> sessionLogin(
       {required UuidValue sessionId,
       required String osUsername,

@@ -887,19 +887,39 @@ class FfiModel with ChangeNotifier {
     final text = evt['text'];
     final link = evt['link'];
 
-    // Z远程协助: config-info payload — forward to the page, never show a dialog
-    // and never let the offline/retry heuristics treat it as an error.
-    if (type == 'zremote66-config-info') {
+    // Z远程协助: 配置信息 / 操作结果回传统一路由：
+    // 1) 本 isolate 就是配置信息窗口（DesktopType.configInfo）：直接刷新页面；
+    // 2) 其它桌面 isolate（主窗口/远程窗口等持有会话者）：本 isolate 没有配置信息页面，
+    //    把 JSON 转发给主窗口，由主窗口广播给对应的配置信息子窗口；
+    // 3) 移动端/网页：配置页面与 msgBox 同 isolate，数据直达。
+    if (type == 'zremote66-config-info' ||
+        type == 'zremote66-config-op-result') {
       dialogManager.dismissAll();
-      ConfigInfoController.instance.update(text ?? '');
-      return;
-    }
-
-    // Z远程协助: result of a config-info operation (uninstall / service
-    // start-stop / refresh). Forward to the page controller; no dialog.
-    if (type == 'zremote66-config-op-result') {
-      dialogManager.dismissAll();
-      ConfigInfoController.instance.onOpResult(text ?? '');
+      if (desktopType == DesktopType.configInfo) {
+        if (type == 'zremote66-config-info') {
+          ConfigInfoController.instance.update(text ?? '');
+        } else {
+          ConfigInfoController.instance.onOpResult(text ?? '');
+        }
+        return;
+      }
+      if (isDesktop) {
+        if (desktopType == DesktopType.main) {
+          // Z远程协助: 主窗口 isolate 自己持有会话，直接广播给配置信息子窗口，
+          // 避免对自身 windowId 的 invokeMethod 自调用（插件 self-invoke 行为不可靠）。
+          unawaited(rustDeskWinManager.forwardToConfigInfoWindows(
+              jsonEncode({'type': type, 'text': text ?? ''})));
+        } else {
+          unawaited(rustDeskWinManager.call(WindowType.Main,
+              kWindowEventConfigInfoData, jsonEncode({'type': type, 'text': text ?? ''})));
+        }
+        return;
+      }
+      if (type == 'zremote66-config-info') {
+        ConfigInfoController.instance.update(text ?? '');
+      } else {
+        ConfigInfoController.instance.onOpResult(text ?? '');
+      }
       return;
     }
 

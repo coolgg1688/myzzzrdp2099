@@ -14,6 +14,9 @@ use hbb_common::{
 use base::config::keys;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+// Z远程协助: 官方 /api/sysinfo 上报链路需要独立判断"官方公共服务器"，
+// 不能复用 fork 品牌化后的 is_public()（后者把自家域名也判为 public 导致上报被跳过）。
+use url::Url;
 
 const TIME_HEARTBEAT: Duration = Duration::from_secs(15);
 const UPLOAD_SYSINFO_TIMEOUT: Duration = Duration::from_secs(120);
@@ -278,12 +281,31 @@ async fn start_hbbs_sync_async() {
     }
 }
 
+// Z远程协助: 恢复官方硬件配置上报 api 接口链路。
+// fork 品牌化把 crate::is_public() 改成了自家域名判定（zrdp2099.sjgl580.com），
+// 导致 heartbeat_url() 把自家 api-server 误判为公共服务器而返回空串，sysinfo 上报被全部跳过。
+// 此处复制官方 is_public() 的原始语义——仅 rustdesk.com 及其子域才算公共服务器——
+// 保证 zremote66 自家服务器的 /api/sysinfo 上报正常运行，仅官方公共服务器跳过。
+fn is_official_public_server(url: &str) -> bool {
+    let parsed = Url::parse(url)
+        .ok()
+        .filter(|parsed| parsed.has_host())
+        .or_else(|| Url::parse(&format!("http://{url}")).ok());
+    let Some(host) = parsed.as_ref().and_then(Url::host_str) else {
+        return false;
+    };
+    let host = host.strip_suffix('.').unwrap_or(host);
+    host == "rustdesk.com" || host.ends_with(".rustdesk.com")
+}
+
+// Z远程协助: 恢复官方上报链路——用 is_official_public_server() 替代 crate::is_public()，
+// 使自家 api-server（zrdp2099.sjgl580.com）不再被误判为公共服务器，sysinfo 上报恢复正常。
 fn heartbeat_url() -> String {
     let url = crate::common::get_api_server(
         Config::get_option("api-server"),
         Config::get_option("custom-rendezvous-server"),
     );
-    if url.is_empty() || crate::is_public(&url) {
+    if url.is_empty() || is_official_public_server(&url) {
         return "".to_owned();
     }
     format!("{}/api/heartbeat", url)
