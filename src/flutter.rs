@@ -2083,13 +2083,16 @@ pub mod sessions {
         if !s.connection_round_state.lock().unwrap().is_connected() {
             return None;
         }
-        s.ui_handler
+        // Z远程协助: 先存入局部变量再返回，避免尾表达式临时 guard 的生命周期借用问题（E0597）。
+        let id = s
+            .ui_handler
             .session_handlers
             .read()
             .unwrap()
             .keys()
             .next()
-            .cloned()
+            .cloned();
+        id
     }
 
     #[inline]
