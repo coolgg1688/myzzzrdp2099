@@ -61,6 +61,23 @@ class ConfigInfoController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Z远程协助: connection-level failure surfaced from the Rust side (peer
+  // offline, wrong password, permission denied, login rejected, ...). This isolate
+  // hosts ONLY the config page, so such events are routed here instead of a
+  // blocking dialog: stop the spinner and show the reason in-page. Never throws.
+  void onConnectionError(String? title, String? text) {
+    loading = false;
+    data ??= {};
+    final t = (text ?? '').trim();
+    final ti = (title ?? '').trim();
+    error = t.isNotEmpty
+        ? t
+        : (ti.isNotEmpty
+            ? ti
+            : '连接失败，请确认被控端在线且密码正确');
+    notifyListeners();
+  }
+
   void _resetOpState() {
     opPending = false;
     opResultMessage = null;
@@ -387,12 +404,14 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
   // 操作系统 -> 厂家型号 -> 主板 -> CPU -> 内存 -> 硬盘 -> 显卡 -> 分辨率 -> 网卡。
   // 任一字段取不到（空串 / 0 / 缺失）时整行隐藏，不显示"未知"。
   Widget _hardwareTab(Map<String, dynamic> data) {
-    final os = (data['os'] as Map?) ?? const {};
-    final machine = (data['machine'] as Map?) ?? const {};
-    final board = (data['board'] as Map?) ?? const {};
-    final cpu = (data['cpu'] as Map?) ?? const {};
-    final mem = (data['memory'] as Map?) ?? const {};
-    final disk = (data['disk'] as Map?) ?? const {};
+    // 防御: 任一字段类型不符（非 Map）时按空 Map 处理, 绝不上抛导致红屏。
+    Map hwMap(dynamic v) => v is Map ? v : const {};
+    final os = hwMap(data['os']);
+    final machine = hwMap(data['machine']);
+    final board = hwMap(data['board']);
+    final cpu = hwMap(data['cpu']);
+    final mem = hwMap(data['memory']);
+    final disk = hwMap(data['disk']);
 
     final rows = <_HwRow>[];
 
@@ -552,9 +571,15 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
     final gpu = data['gpu']?.toString() ?? '';
     if (gpu.isNotEmpty) rows.add(_HwRow(label: '显卡', value: gpu, group: 6));
 
-    // group 7: 分辨率（原"屏幕"行改名，字符串非空才显示）
-    final screen = data['screen']?.toString() ?? '';
-    if (screen.isNotEmpty) rows.add(_HwRow(label: '分辨率', value: screen, group: 7));
+    // group 7: 分辨率。screen 键存在但值为空串(如无显示器的 headless/服务会话)时
+    // 显示"暂不支持"; screen 键缺失(旧被控端)则整行隐藏, 保持兼容。
+    if (data.containsKey('screen')) {
+      final screen = data['screen']?.toString() ?? '';
+      rows.add(_HwRow(
+          label: '分辨率',
+          value: screen.isEmpty ? '暂不支持' : screen,
+          group: 7));
+    }
 
     // group 8: 网卡（data.net[]；缺失/空数组则整组不显示）
     {

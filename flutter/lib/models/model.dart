@@ -903,6 +903,17 @@ class FfiModel with ChangeNotifier {
       return;
     }
 
+    // Z远程协助: this isolate hosts ONLY the config-info page — there is no remote
+    // desktop UI, no password dialog, no accept prompt. Any other MessageBox event
+    // here is a connection-level outcome (peer offline, wrong password, permission
+    // denied, login rejected). Dismiss the "正在连接" loading and surface the reason
+    // on the page instead of popping a blocking dialog that would hang the window.
+    if (desktopType == DesktopType.configInfo) {
+      dialogManager.dismissAll();
+      ConfigInfoController.instance.onConnectionError(title, text);
+      return;
+    }
+
     // The peer-gone detector reconnects under `restarting-show` rather than an error title, so
     // it needs naming here too. By its own title, not the type: an explicitly restarted remote
     // device reaches the same type from a path this change does not touch.
@@ -4235,10 +4246,12 @@ class FFI {
       );
       // Z远程协助: deterministically (re)set the config-info flag on EVERY new
       // session, so a prior "Y" never leaks into a later plain connection. The
-      // Rust side uses this option to decide whether to set the config_info union.
+      // Rust side uses this session-local option to decide whether to attach the
+      // fork-specific ZRemote66ConfigInfo union variant (independent tag 28, see
+      // message.proto); the option itself never goes online.
       bind.sessionPeerOption(
           sessionId: sessionId,
-          name: "zremote_config_info",
+          name: "zremote66_config_info",
           value: isConfigInfo ? "Y" : "");
     } else if (display != null) {
       if (displays == null) {

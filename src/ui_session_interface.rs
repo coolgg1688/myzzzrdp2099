@@ -240,6 +240,14 @@ impl<T: InvokeUiSession> Session<T> {
         conn_type == ConnType::PORT_FORWARD || conn_type == ConnType::RDP
     }
 
+    // Z远程协助: fork-specific one-shot hardware/software info query session. The flag is a
+    // session-local option (never goes online) that mirrors the tag-28 union variant; such a
+    // session carries no display/camera/shell, so display-related init and success dialogs must
+    // be skipped.
+    pub fn is_config_info(&self) -> bool {
+        self.lc.read().unwrap().get_option("zremote66_config_info") == "Y"
+    }
+
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn is_rdp(&self) -> bool {
         self.lc.read().unwrap().conn_type.eq(&ConnType::RDP)
@@ -1831,7 +1839,7 @@ impl<T: InvokeUiSession> Interface for Session<T> {
                 self.on_error("No active console user logged on, please connect and logon first.");
                 return;
             }
-        } else if !self.is_port_forward() && !self.is_terminal() {
+        } else if !self.is_port_forward() && !self.is_terminal() && !self.is_config_info() {
             if pi.displays.is_empty() {
                 self.lc.write().unwrap().handle_peer_info(&pi);
                 self.update_privacy_mode();
@@ -1869,7 +1877,7 @@ impl<T: InvokeUiSession> Interface for Session<T> {
         self.set_peer_info(&pi);
         if self.is_file_transfer() {
             self.close_success();
-        } else if !self.is_port_forward() && !self.is_terminal() {
+        } else if !self.is_port_forward() && !self.is_terminal() && !self.is_config_info() {
             self.msgbox(
                 "success",
                 "Successful",

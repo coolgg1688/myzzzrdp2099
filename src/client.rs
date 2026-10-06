@@ -3883,11 +3883,14 @@ impl LoginConfigHandler {
             avatar,
             ..Default::default()
         };
-        // Z远程协助: a session flagged via the "zremote_config_info" option asks for
-        // a one-shot hardware/software info query. Transport uses the default conn_type
-        // (punch-hole/rendezvous unchanged); only the LoginRequest union differs.
-        if self.get_option("zremote_config_info") == "Y" {
-            lr.set_config_info(Default::default());
+        // Z远程协助: a session flagged via the session-local option "zremote66_config_info" asks
+        // for a one-shot hardware/software info query. Transport uses the default conn_type
+        // (punch-hole/rendezvous unchanged); the LoginRequest union carries the fork-specific
+        // ZRemote66ConfigInfo variant at independent tag 28 (see message.proto), which does not
+        // touch any official upstream field. The option itself is viewer-local state and never
+        // goes online.
+        if self.get_option("zremote66_config_info") == "Y" {
+            lr.set_zremote66_config_info(Default::default());
         } else {
             match self.conn_type {
                 ConnType::FILE_TRANSFER => lr.set_file_transfer(FileTransfer {

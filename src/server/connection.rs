@@ -2777,8 +2777,9 @@ impl Connection {
                 push(&port.to_le_bytes());
                 push(&[*multiplex as u8]);
             }
-            Some(login_request::Union::ConfigInfo(_)) => {
-                push(b"config_info");
+            Some(login_request::Union::Zremote66ConfigInfo(_)) => {
+                // zremote66 独立 tag-28 机制 (见 message.proto), 不碰官方字段
+                push(b"zremote66_config_info");
             }
             // Variants this build does not know execute as remote, so they latch as remote.
             None | Some(_) => push(b"remote"),
@@ -2793,7 +2794,7 @@ impl Connection {
             Some(login_request::Union::ViewCamera(_)) => "view_camera",
             Some(login_request::Union::Terminal(_)) => "terminal",
             Some(login_request::Union::PortForward(_)) => "port_forward",
-            Some(login_request::Union::ConfigInfo(_)) => "config_info",
+            Some(login_request::Union::Zremote66ConfigInfo(_)) => "zremote66_config_info",
             _ => "remote",
         }
     }
@@ -2954,8 +2955,9 @@ impl Connection {
                     let (addr, _is_rdp) = Self::normalize_port_forward_target(&mut pf);
                     self.port_forward_address = addr;
                 }
-                Some(login_request::Union::ConfigInfo(_)) => {
-                    // Z远程协助: read-only info query. No permission key of its own;
+                Some(login_request::Union::Zremote66ConfigInfo(_)) => {
+                    // Z远程协助: read-only info query over the fork-specific tag-28 union
+                    // variant (see message.proto). No permission key of its own;
                     // password authentication below is the only gate, unchanged.
                     self.config_info = true;
                 }

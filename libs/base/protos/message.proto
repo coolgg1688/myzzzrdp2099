@@ -60,8 +60,11 @@ message FileTransfer {
 
 message ViewCamera {}
 
-// Z远程协助: one-shot hardware/software info query (request body is empty).
-message ConfigInfo {}
+// Z远程协助 独立机制: one-shot hardware/software info query (request body is empty).
+// 注意: 这是 zremote66 fork 自加的独立消息, 使用 LoginRequest union 的独立 tag 28,
+// 不触碰官方上游 message.proto 的任何字段 (官方 union 仅 file_transfer=7 /
+// port_forward=8 / view_camera=15 / terminal=16 四个变体)。
+message ZRemote66ConfigInfo {}
 
 message OSLogin {
   string username = 1;
@@ -79,7 +82,7 @@ message LoginRequest {
     PortForward port_forward = 8;
     ViewCamera view_camera = 15;
     Terminal terminal = 16;
-    ConfigInfo config_info = 18;
+    ZRemote66ConfigInfo zremote66_config_info = 28; // zremote66 独立 tag, 不碰官方字段
   }
   bool video_ack_required = 9;
   uint64 session_id = 10;
