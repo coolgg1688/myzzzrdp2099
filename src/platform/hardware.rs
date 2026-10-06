@@ -59,6 +59,9 @@ mod win {
     use winreg::enums::*;
     use winreg::RegKey;
     use winreg::reg_key::HKEY;
+    // Z远程协助: 用 sysinfo（Rust 最强跨平台硬件库）重构易失败的内存/磁盘/网络采集，
+    // 替代脆弱的手写 DeviceIoControl / GetIfTable2 FFI（后者在部分机器 panic 导致配置窗口白屏）。
+    use sysinfo::{Disks, Networks, System};
 
     const DRIVE_FIXED: u32 = 3;
 
@@ -177,17 +180,13 @@ mod win {
         }
     }
 
-    // ---- Memory via GlobalMemoryStatusEx + SMBIOS Type 17 ----------------
+    // ---- Memory via sysinfo (robust, no panic) + SMBIOS Type 17 brand -----
     pub fn memory() -> Value {
-        use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
-        let mut st: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
-        st.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
-        let ok = unsafe { GlobalMemoryStatusEx(&mut st) };
-        if ok.is_err() {
-            return json!({"total_gb":0.0,"available_gb":0.0,"used_gb":0.0,"brand":""});
-        }
-        let total_b = st.ullTotalPhys as f64;
-        let avail_b = st.ullAvailPhys as f64;
+        let mut sys = System::new_all();
+        sys.refresh_memory();
+        // sysinfo returns KiB; convert to bytes.
+        let total_b = sys.total_memory() as f64 * 1024.0;
+        let avail_b = sys.available_memory() as f64 * 1024.0;
         let used_b = (total_b - avail_b).max(0.0);
         let brand = smbios_memory_brand();
         json!({
@@ -198,104 +197,41 @@ mod win {
         })
     }
 
-    // ---- Disk: logical volumes + physical disk grouping -------------------
+    // ---- Disk via sysinfo Disks (name/mount/total/free) ------------------
     pub fn disk() -> Value {
-        use windows::Win32::Storage::FileSystem::{
-            GetLogicalDrives, GetDriveTypeW, GetDiskFreeSpaceExW, GetVolumeInformationW,
-        };
-        use windows::core::PCWSTR;
-
-        let drives = unsafe { GetLogicalDrives() };
-        let mut vol_disk: Vec<(u32 /*disk no*/, Value)> = Vec::new();
+        use sysinfo::Disks;
+        let disks = Disks::new_with_refreshed_list();
         let mut total_b = 0f64;
         let mut free_b = 0f64;
-
-        for i in 0..26u32 {
-            if (drives >> i) & 1 == 0 {
-                continue;
-            }
-            let letter = (b'A' + i as u8) as char;
-            let root: Vec<u16> = format!("{}:\\", letter).encode_utf16().chain([0]).collect();
-            let p = PCWSTR(root.as_ptr());
-            let dt = unsafe { GetDriveTypeW(p) };
-            if dt != DRIVE_FIXED {
-                continue;
-            }
-            let mut t = 0u64;
-            let mut f = 0u64;
-            let mut avail = 0u64;
-            if unsafe { GetDiskFreeSpaceExW(p, Some(&mut avail), Some(&mut t), Some(&mut f)) }.is_err() {
-                continue;
-            }
-            let mut label = [0u16; 64];
-            let mut _ser = 0u32;
-            let mut _maxc = 0u32;
-            let mut _fsf = 0u32;
-            let _ = unsafe {
-                GetVolumeInformationW(
-                    p,
-                    Some(&mut label),
-                    Some(&mut _ser),
-                    Some(&mut _maxc),
-                    Some(&mut _fsf),
-                    None,
-                )
-            };
-            let end = label.iter().position(|&c| c == 0).unwrap_or(label.len());
-            let label_s = String::from_utf16_lossy(&label[..end]);
-
-            let tb = t as f64;
-            let fb = f as f64;
-            total_b += tb;
-            free_b += fb;
-            let part = json!({
-                "name": format!("{}:", letter),
-                "label": label_s,
-                "total_gb": r1(tb / 1073741824.0),
-                "free_gb": r1(fb / 1073741824.0),
-                "used_gb": r1((tb - fb) / 1073741824.0),
-            });
-            let disk_no = volume_disk_number(p);
-            vol_disk.push((disk_no, part));
-        }
-
-        // Group partitions by physical disk number.
-        let mut by_disk: HashMap<u32, Vec<Value>> = HashMap::new();
-        for (d, p) in vol_disk {
-            by_disk.entry(d).or_default().push(p);
-        }
-        let mut disks: Vec<Value> = Vec::new();
-        for (dno, parts) in by_disk {
-            let mut dt = 0f64;
-            let mut df = 0f64;
-            for p in &parts {
-                if let Some(t) = p.get("total_gb").and_then(|v| v.as_f64()) {
-                    dt += t;
-                }
-                if let Some(f) = p.get("free_gb").and_then(|v| v.as_f64()) {
-                    df += f;
-                }
-            }
-            let model = if dno == u32::MAX {
-                String::new()
-            } else {
-                physical_disk_model(dno)
-            };
-            disks.push(json!({
-                "name": if dno == u32::MAX { String::new() } else { format!("PhysicalDrive{}", dno) },
-                "model": model,
-                "total_gb": r1(dt),
-                "free_gb": r1(df),
-                "used_gb": r1((dt - df).max(0.0)),
-                "partitions": parts,
+        let mut out: Vec<Value> = Vec::new();
+        for d in disks.list() {
+            let total = d.total_space() as f64;
+            let avail = d.available_space() as f64;
+            let used = (total - avail).max(0.0);
+            let mount: String = d.mount_point().to_string_lossy().into_owned();
+            let dev: String = d.name().to_string_lossy().into_owned();
+            total_b += total;
+            free_b += avail;
+            out.push(json!({
+                "name": if mount.is_empty() { dev.clone() } else { mount.clone() },
+                "model": dev,
+                "total_gb": r1(total / 1073741824.0),
+                "free_gb": r1(avail / 1073741824.0),
+                "used_gb": r1(used / 1073741824.0),
+                "partitions": [{
+                    "name": mount,
+                    "label": "",
+                    "total_gb": r1(total / 1073741824.0),
+                    "free_gb": r1(avail / 1073741824.0),
+                    "used_gb": r1(used / 1073741824.0),
+                }],
             }));
         }
-
         json!({
             "total_gb": r1(total_b / 1073741824.0),
             "free_gb": r1(free_b / 1073741824.0),
             "used_gb": r1((total_b - free_b).max(0.0) / 1073741824.0),
-            "disks": disks,
+            "disks": out,
         })
     }
 
@@ -828,72 +764,24 @@ mod win {
         }
     }
 
-    // ---- Network adapters + throughput sample -----------------------------
+    // ---- Network adapters + throughput via sysinfo (no panic-prone FFI) ---
     pub fn net() -> Value {
-        use windows::Win32::NetworkManagement::IpHelper::{
-            GetAdaptersInfo, IP_ADAPTER_INFO,
-        };
-        let mut adapters: Vec<(u32 /*index*/, String, String, String)> = Vec::new();
-        unsafe {
-            let mut len = 0u32;
-            let _ = GetAdaptersInfo(None, &mut len);
-            if len == 0 {
-                return json!(Vec::<Value>::new());
-            }
-            let mut buf: Vec<u8> = vec![0u8; len as usize];
-            let st = GetAdaptersInfo(Some(buf.as_mut_ptr() as *mut IP_ADAPTER_INFO), &mut len);
-            if st != 0 {
-                return json!(Vec::<Value>::new());
-            }
-            let mut p = buf.as_ptr() as *const IP_ADAPTER_INFO;
-            while !p.is_null() && adapters.len() < super::MAX_NET {
-                let a = &*p;
-                // Description is [i8; 132] (ANSI bytes), not [u16; N].
-                let desc_end = a.Description.iter().position(|&c| c == 0).unwrap_or(a.Description.len());
-                let desc_bytes: Vec<u8> = a.Description[..desc_end].iter().map(|&c| c as u8).collect();
-                let desc = String::from_utf8_lossy(&desc_bytes).into_owned();
-                let mac: String = a.Address[..(a.AddressLength as usize).min(8)]
-                    .iter()
-                    .map(|b| format!("{:02X}", b))
-                    .collect::<Vec<_>>()
-                    .join(":");
-                let mut ip = String::new();
-                let mut cur = a.IpAddressList.Next;
-                while !cur.is_null() {
-                    let s = std::ffi::CStr::from_ptr((*cur).IpAddress.String.as_ptr());
-                    if let Ok(t) = s.to_str() {
-                        if !t.is_empty() && t != "0.0.0.0" {
-                            ip = t.to_string();
-                            break;
-                        }
-                    }
-                    cur = (*cur).Next;
-                }
-                adapters.push((a.Index, desc, mac, ip));
-                p = a.Next;
-            }
-        }
-
-        let s1 = sample_if_octets();
+        use sysinfo::Networks;
+        let mut networks = Networks::new_with_refreshed_list();
+        let _ = networks.refresh(false);
         std::thread::sleep(std::time::Duration::from_millis(500));
-        let s2 = sample_if_octets();
-
+        let _ = networks.refresh(false);
         let mut out: Vec<Value> = Vec::new();
-        for (idx, name, mac, ip) in adapters {
-            let (rx, tx) = match (s1.get(&idx), s2.get(&idx)) {
-                (Some(a), Some(b)) => {
-                    let drx = b.0.saturating_sub(a.0) as f64;
-                    let dtx = b.1.saturating_sub(a.1) as f64;
-                    (r1(drx / 0.5 / 1024.0), r1(dtx / 0.5 / 1024.0))
-                }
-                _ => (0.0, 0.0),
-            };
+        for (name, data) in networks.list() {
+            // received()/transmitted() = bytes since last refresh (over the 0.5s window).
+            let rx_kbps = r1(data.received() as f64 / 0.5 / 1024.0);
+            let tx_kbps = r1(data.transmitted() as f64 / 0.5 / 1024.0);
             out.push(json!({
-                "name": name,
-                "mac": mac,
-                "ip": ip,
-                "rx_kbps": rx,
-                "tx_kbps": tx,
+                "name": name.clone(),
+                "mac": "",
+                "ip": "",
+                "rx_kbps": rx_kbps,
+                "tx_kbps": tx_kbps,
             }));
         }
         json!(out)

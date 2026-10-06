@@ -153,6 +153,7 @@ windows = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 winreg = "0.11"
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk", "network", "user", "multithread", "windows"] }
 windows-service = "0.6"
 virtual_display = { path = "libs/virtual_display" }
 remote_printer = { path = "libs/remote_printer" }

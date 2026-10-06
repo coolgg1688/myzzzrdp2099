@@ -2306,7 +2306,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330c60081dcc4c72131f8eb70510f1ac07223e5d4163db481a04a0befcffa412"
 dependencies = [
- "libloading 0.7.4",
+ "libloading 0.8.4",
 ]
 
 [[package]]
@@ -3724,7 +3724,7 @@ dependencies = [
  "sha2",
  "socket2 0.3.19",
  "sodiumoxide",
- "sysinfo",
+ "sysinfo 0.29.10",
  "thiserror 1.0.61",
  "tokio",
  "tokio-native-tls",
@@ -4427,7 +4427,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e310b3a6b5907f99202fcdb4960ff45b93735d7c7d96b760fcff8db2dc0e103d"
 dependencies = [
  "cfg-if 1.0.0",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -7173,6 +7173,7 @@ dependencies = [
  "softbuffer",
  "stunclient",
  "sys-locale",
+ "sysinfo 0.33.1",
  "system_shutdown",
  "tao",
  "tauri-winrt-notification",
@@ -8167,6 +8168,20 @@ dependencies = [
  "once_cell",
  "rayon",
  "windows 0.51.1",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fc858248ea01b66f19d8e8a6d55f41deaf91e9d495246fd01368d99935c6c01"
+dependencies = [
+ "core-foundation-sys 0.8.7",
+ "libc",
+ "memchr",
+ "ntapi",
+ "rayon",
+ "windows 0.54.0",
 ]
 
 [[package]]
