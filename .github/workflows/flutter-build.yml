@@ -2578,7 +2578,9 @@ jobs:
     name: build-rustdesk-web
     runs-on: ubuntu-22.04
     permissions:
-      contents: read
+      # "Publish web" creates/updates the nightly prerelease (softprops/action-gh-release),
+      # so the web job needs contents write, not read.
+      contents: write
     strategy:
       fail-fast: false
     env:
