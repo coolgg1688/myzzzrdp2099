@@ -206,7 +206,7 @@ mod win {
         let mut out: Vec<Value> = Vec::new();
         for d in disks.list() {
             let fs = d.file_system().to_string_lossy().into_owned();
-            if is_virtual_fs(&fs) {
+            if super::is_virtual_fs(&fs) {
                 continue;
             }
             let total = d.total_space() as f64;
