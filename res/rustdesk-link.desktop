@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=Z远程协助
+Name=z远程协助
 NoDisplay=true
 MimeType=x-scheme-handler/rustdesk;
 TryExec=rustdesk

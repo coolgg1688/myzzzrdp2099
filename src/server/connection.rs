@@ -365,6 +365,8 @@ pub struct Connection {
     file_transfer: Option<(String, bool)>,
     view_camera: bool,
     terminal: bool,
+    // Z远程协助: one-shot hardware/software info query (no screen/camera/shell).
+    config_info: bool,
     port_forward_socket: Option<Framed<TcpStream, BytesCodec>>,
     port_forward_mux: Option<super::port_forward_mux::PortForwardMux>,
     port_forward_address: String,
@@ -581,6 +583,7 @@ impl Connection {
             file_transfer: None,
             view_camera: false,
             terminal: false,
+            config_info: false,
             port_forward_socket: None,
             port_forward_mux: None,
             port_forward_address: "".to_owned(),
@@ -2083,10 +2086,10 @@ impl Connection {
         #[allow(unused_mut)]
         let mut wait_session_id_confirm = false;
         #[cfg(windows)]
-        if !self.terminal {
+        if !self.terminal && !self.config_info {
             self.handle_windows_specific_session(&mut pi, &mut wait_session_id_confirm);
         }
-        if self.file_transfer.is_some() || self.terminal {
+        if self.file_transfer.is_some() || self.terminal || self.config_info {
             res.set_peer_info(pi);
         } else if self.view_camera {
             let supported_encoding = scrap::codec::Encoder::supported_encoding();
@@ -2167,6 +2170,11 @@ impl Connection {
         msg_out.set_login_response(res);
         self.send(msg_out).await;
         self.update_scoped_login_options().await;
+        if self.config_info {
+            // Z远程协助: authenticated — collect local info and ship it back as a
+            // MessageBox. No screen/camera/shell service is started for this scope.
+            self.send_config_info_response().await;
+        }
         if let Some((dir, show_hidden)) = self.file_transfer.clone() {
             self.keyboard = false;
             let is_existing_dir = !dir.is_empty() && std::path::Path::new(&dir).is_dir();
@@ -2203,6 +2211,22 @@ impl Connection {
         true
     }
 
+    // Z远程协助: collect local hardware/software info and deliver it through the
+    // existing MessageBox channel. Collection is fully fallible and never panics.
+    async fn send_config_info_response(&mut self) {
+        let json = crate::platform::hardware::collect_config_info();
+        let mb = MessageBox {
+            msgtype: "zremote66-config-info".to_owned(),
+            title: "Z远程协助".to_owned(),
+            text: json,
+            link: "".to_owned(),
+            ..Default::default()
+        };
+        let mut msg_out = Message::new();
+        msg_out.set_message_box(mb);
+        self.send(msg_out).await;
+    }
+
     fn try_sub_camera_displays(&mut self) {
         if let Some(s) = self.server.upgrade() {
             let mut s = s.write().unwrap();
@@ -2218,6 +2242,7 @@ impl Connection {
             && !self.is_port_forward()
             && !self.view_camera
             && !self.terminal
+            && !self.config_info
     }
 
     #[inline]
@@ -2700,6 +2725,7 @@ impl Connection {
         self.file_transfer = None;
         self.view_camera = false;
         self.terminal = false;
+        self.config_info = false;
         self.port_forward_address.clear();
         self.terminal_persistent = false;
     }
@@ -2751,6 +2777,9 @@ impl Connection {
                 push(&port.to_le_bytes());
                 push(&[*multiplex as u8]);
             }
+            Some(login_request::Union::ConfigInfo(_)) => {
+                push(b"config_info");
+            }
             // Variants this build does not know execute as remote, so they latch as remote.
             None | Some(_) => push(b"remote"),
         }
@@ -2764,6 +2793,7 @@ impl Connection {
             Some(login_request::Union::ViewCamera(_)) => "view_camera",
             Some(login_request::Union::Terminal(_)) => "terminal",
             Some(login_request::Union::PortForward(_)) => "port_forward",
+            Some(login_request::Union::ConfigInfo(_)) => "config_info",
             _ => "remote",
         }
     }
@@ -2923,6 +2953,11 @@ impl Connection {
                     }
                     let (addr, _is_rdp) = Self::normalize_port_forward_target(&mut pf);
                     self.port_forward_address = addr;
+                }
+                Some(login_request::Union::ConfigInfo(_)) => {
+                    // Z远程协助: read-only info query. No permission key of its own;
+                    // password authentication below is the only gate, unchanged.
+                    self.config_info = true;
                 }
                 _ => {
                     if !self.check_privacy_mode_on().await {

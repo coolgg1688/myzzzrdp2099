@@ -34,6 +34,8 @@ import 'mobile/pages/file_manager_page.dart';
 import 'mobile/pages/remote_page.dart';
 import 'mobile/pages/view_camera_page.dart';
 import 'mobile/pages/terminal_page.dart';
+import 'common/widgets/config_info_page.dart';
+export 'common/widgets/config_info_page.dart';
 import 'desktop/pages/remote_page.dart' as desktop_remote;
 import 'desktop/pages/file_manager_page.dart' as desktop_file_manager;
 import 'desktop/pages/view_camera_page.dart' as desktop_view_camera;
@@ -108,6 +110,8 @@ enum DesktopType {
   terminal,
   cm,
   portForward,
+  // Z远程协助
+  configInfo,
 }
 
 bool isDoubleEqual(double a, double b) {
@@ -1182,6 +1186,13 @@ void msgBox(SessionID sessionId, String type, String title, String text,
     int? reconnectTimeout,
     VoidCallback? onSubmit,
     int? submitTimeout}) {
+  // Z远程协助: the peer's config info is pushed back as a MessageBox. Route the
+  // JSON payload to the config-info page instead of showing a dialog.
+  if (type == 'zremote66-config-info') {
+    dialogManager.dismissAll();
+    ConfigInfoController.instance.update(text);
+    return;
+  }
   dialogManager.dismissAll();
   if (type.contains('insecure-connection')) {
     Future<void> closeSession() async {
@@ -2495,6 +2506,10 @@ List<String>? urlLinkToCmdArgs(Uri uri) {
     } else if (command == '--terminal') {
       connect(Get.context!, id,
           isTerminal: true, forceRelay: forceRelay, password: password);
+    } else if (command == '--config-info') {
+      // Z远程协助
+      connect(Get.context!, id,
+          isConfigInfo: true, forceRelay: forceRelay, password: password);
     } else if (command == 'terminal-admin') {
       setEnvTerminalAdmin();
       connect(Get.context!, id,
@@ -2528,6 +2543,7 @@ connectMainDesktop(String id,
     required bool isTerminal,
     required bool isTcpTunneling,
     required bool isRDP,
+    required bool isConfigInfo,
     bool? forceRelay,
     String? password,
     String? connToken,
@@ -2540,6 +2556,13 @@ connectMainDesktop(String id,
         forceRelay: forceRelay);
   } else if (isViewCamera) {
     await rustDeskWinManager.newViewCamera(id,
+        password: password,
+        isSharedPassword: isSharedPassword,
+        connToken: connToken,
+        forceRelay: forceRelay);
+  } else if (isConfigInfo) {
+    // Z远程协助: independent resizable window for the peer's config info.
+    await rustDeskWinManager.newConfigInfo(id,
         password: password,
         isSharedPassword: isSharedPassword,
         connToken: connToken,
@@ -2575,6 +2598,7 @@ connect(BuildContext context, String id,
     bool isTerminal = false,
     bool isTcpTunneling = false,
     bool isRDP = false,
+    bool isConfigInfo = false,
     bool forceRelay = false,
     String? password,
     String? connToken,
@@ -2608,6 +2632,7 @@ connect(BuildContext context, String id,
         isTerminal: isTerminal,
         isTcpTunneling: isTcpTunneling,
         isRDP: isRDP,
+        isConfigInfo: isConfigInfo,
         password: password,
         isSharedPassword: isSharedPassword,
         forceRelay: forceRelay,
@@ -2620,6 +2645,7 @@ connect(BuildContext context, String id,
         'isTerminal': isTerminal,
         'isTcpTunneling': isTcpTunneling,
         'isRDP': isRDP,
+        'isConfigInfo': isConfigInfo,
         'password': password,
         'isSharedPassword': isSharedPassword,
         'forceRelay': forceRelay,
@@ -2683,6 +2709,19 @@ connect(BuildContext context, String id,
         context,
         MaterialPageRoute(
           builder: (BuildContext context) => TerminalPage(
+            id: id,
+            password: password,
+            isSharedPassword: isSharedPassword,
+            forceRelay: forceRelay,
+          ),
+        ),
+      );
+    } else if (isConfigInfo) {
+      // Z远程协助: full-screen config info page on mobile.
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (BuildContext context) => ConfigInfoPage(
             id: id,
             password: password,
             isSharedPassword: isSharedPassword,
@@ -3034,6 +3073,8 @@ String getWindowName({WindowType? overrideType}) {
       return "Port Forward - $displayName";
     case WindowType.RemoteDesktop:
       return "Remote Desktop - $displayName";
+    case WindowType.ConfigInfo:
+      return "被控端配置信息";
     default:
       break;
   }

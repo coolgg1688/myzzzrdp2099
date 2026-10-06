@@ -2566,10 +2566,10 @@ pub fn get_builtin_option(key: &str) -> String {
         .get(key)
         .cloned()
         .unwrap_or_default();
-    if v.is_empty() && key == "default-connect-password" {
-        // Preset default password for unattended management of the customized build.
-        return "z@2099666".to_string();
-    }
+    // NOTE: intentionally do NOT auto-fill a default connect password here.
+    // The controlled side enforces its preset password (z@2099666) via
+    // get_preset_password_storage_and_salt(); the controller MUST actively
+    // type the password, otherwise the empty credential fails verification.
     v
 }
 

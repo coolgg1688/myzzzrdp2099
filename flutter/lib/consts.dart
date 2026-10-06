@@ -51,6 +51,8 @@ const String kAppTypeDesktopFileTransfer = "file transfer";
 const String kAppTypeDesktopViewCamera = "view camera";
 const String kAppTypeDesktopPortForward = "port forward";
 const String kAppTypeDesktopTerminal = "terminal";
+// Z远程协助: independent resizable window for the peer's config info.
+const String kAppTypeDesktopConfigInfo = "config info";
 
 const String kWindowMainWindowOnTop = "main_window_on_top";
 const String kWindowRefreshCurrentUser = "refresh_current_user";
@@ -68,6 +70,8 @@ const String kWindowEventNewFileTransfer = "new_file_transfer";
 const String kWindowEventNewViewCamera = "new_view_camera";
 const String kWindowEventNewPortForward = "new_port_forward";
 const String kWindowEventNewTerminal = "new_terminal";
+// Z远程协助: open/bring-up the config-info sub-window.
+const String kWindowEventNewConfigInfo = "new_config_info";
 const String kWindowEventRestoreTerminalSessions = "restore_terminal_sessions";
 const String kWindowEventActiveSession = "active_session";
 const String kWindowEventActiveDisplaySession = "active_display_session";

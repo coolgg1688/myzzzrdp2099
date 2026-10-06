@@ -792,11 +792,12 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       } else if (call.method == kWindowConnect) {
         await connectMainDesktop(
           call.arguments['id'],
-          isFileTransfer: call.arguments['isFileTransfer'],
-          isViewCamera: call.arguments['isViewCamera'],
-          isTerminal: call.arguments['isTerminal'],
-          isTcpTunneling: call.arguments['isTcpTunneling'],
-          isRDP: call.arguments['isRDP'],
+          isFileTransfer: call.arguments['isFileTransfer'] ?? false,
+          isViewCamera: call.arguments['isViewCamera'] ?? false,
+          isTerminal: call.arguments['isTerminal'] ?? false,
+          isTcpTunneling: call.arguments['isTcpTunneling'] ?? false,
+          isRDP: call.arguments['isRDP'] ?? false,
+          isConfigInfo: call.arguments['isConfigInfo'] ?? false,
           password: call.arguments['password'],
           forceRelay: call.arguments['forceRelay'],
           connToken: call.arguments['connToken'],

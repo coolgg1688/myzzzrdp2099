@@ -23,6 +23,9 @@ pub mod linux;
 #[cfg(target_os = "linux")]
 pub mod gtk_sudo;
 
+// Z远程协助: one-shot hardware/software info collection.
+pub mod hardware;
+
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use base::message_proto::CursorData;
 #[cfg(all(

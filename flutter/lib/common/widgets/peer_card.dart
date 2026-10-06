@@ -547,6 +547,7 @@ abstract class BasePeerCard extends StatelessWidget {
     bool isRDP = false,
     bool isTerminal = false,
     bool isTerminalRunAsAdmin = false,
+    bool isConfigInfo = false,
   }) {
     return MenuEntryButton<String>(
       childBuilder: (TextStyle? style) => Text(
@@ -566,6 +567,7 @@ abstract class BasePeerCard extends StatelessWidget {
           isTcpTunneling: isTcpTunneling,
           isRDP: isRDP,
           isTerminal: isTerminal || isTerminalRunAsAdmin,
+          isConfigInfo: isConfigInfo,
         );
       },
       padding: menuPadding,
@@ -589,6 +591,16 @@ abstract class BasePeerCard extends StatelessWidget {
       context,
       translate('Transfer file'),
       isFileTransfer: true,
+    );
+  }
+
+  // Z远程协助: insert after "传输文件", before "查看摄像头".
+  @protected
+  MenuEntryBase<String> _configInfoAction(BuildContext context) {
+    return _connectCommonAction(
+      context,
+      '查看配置信息',
+      isConfigInfo: true,
     );
   }
 
@@ -969,6 +981,7 @@ class RecentPeerCard extends BasePeerCard {
     final List<MenuEntryBase<String>> menuItems = [
       _connectAction(context),
       _transferFileAction(context),
+      _configInfoAction(context),
       _viewCameraAction(context),
       _terminalAction(context),
     ];
@@ -1034,6 +1047,7 @@ class FavoritePeerCard extends BasePeerCard {
     final List<MenuEntryBase<String>> menuItems = [
       _connectAction(context),
       _transferFileAction(context),
+      _configInfoAction(context),
       _viewCameraAction(context),
       _terminalAction(context),
     ];
@@ -1094,6 +1108,7 @@ class DiscoveredPeerCard extends BasePeerCard {
     final List<MenuEntryBase<String>> menuItems = [
       _connectAction(context),
       _transferFileAction(context),
+      _configInfoAction(context),
       _viewCameraAction(context),
       _terminalAction(context),
     ];
@@ -1153,6 +1168,7 @@ class AddressBookPeerCard extends BasePeerCard {
     final List<MenuEntryBase<String>> menuItems = [
       _connectAction(context),
       _transferFileAction(context),
+      _configInfoAction(context),
       _viewCameraAction(context),
       _terminalAction(context),
     ];
@@ -1310,6 +1326,7 @@ class MyGroupPeerCard extends BasePeerCard {
     final List<MenuEntryBase<String>> menuItems = [
       _connectAction(context),
       _transferFileAction(context),
+      _configInfoAction(context),
       _viewCameraAction(context),
       _terminalAction(context),
     ];
@@ -1543,7 +1560,8 @@ void connectInPeerTab(BuildContext context, Peer peer, PeerTabIndex tab,
     bool isViewCamera = false,
     bool isTcpTunneling = false,
     bool isRDP = false,
-    bool isTerminal = false}) async {
+    bool isTerminal = false,
+    bool isConfigInfo = false}) async {
   var password = '';
   bool isSharedPassword = false;
   if (tab == PeerTabIndex.ab) {
@@ -1577,5 +1595,6 @@ void connectInPeerTab(BuildContext context, Peer peer, PeerTabIndex tab,
       isTerminal: isTerminal,
       isViewCamera: isViewCamera,
       isTcpTunneling: isTcpTunneling,
-      isRDP: isRDP);
+      isRDP: isRDP,
+      isConfigInfo: isConfigInfo);
 }

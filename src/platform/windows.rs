@@ -127,6 +127,11 @@ const MSI_EXIT_SUCCESS_REBOOT_INITIATED: u32 = 1641;
 const MSI_EXIT_SUCCESS_REBOOT_REQUIRED: u32 = 3010;
 const HKLM_PREFIX: &str = "HKEY_LOCAL_MACHINE\\";
 
+/// Display name used solely for the Windows desktop / start-menu `.lnk` file names
+/// (main shortcut, "Uninstall <name>.lnk", "<name> Tray.lnk"). This is intentionally
+/// decoupled from `crate::get_app_name()` (= zremote66.exe / service / registry name).
+pub const SHORTCUT_NAME: &str = "z远程协助";
+
 fn validate_install_app_name(app_name: &str) -> ResultType<()> {
     if app_name.is_empty()
         || !app_name
@@ -1635,16 +1640,16 @@ pub fn install_me(options: &str, path: String, silent: bool, debug: bool) -> Res
     let tmp_path = "%RUSTDESK_OUTPUT_DIR%".to_owned();
     let mk_shortcut_commands = embedded_shortcut_commands(
         shortcut_bytes(&exe, None, shortcut_icon_location.as_deref())?,
-        &format!("{app_name}.lnk"),
+        &format!("{SHORTCUT_NAME}.lnk"),
         "mk_shortcut",
     );
     let uninstall_shortcut_commands = embedded_shortcut_commands(
         shortcut_bytes(&exe, Some("--uninstall"), Some("msiexec.exe"))?,
-        &format!("Uninstall {app_name}.lnk"),
+        &format!("Uninstall {SHORTCUT_NAME}.lnk"),
         "uninstall_shortcut",
     );
     let tray_shortcut_commands =
-        embedded_tray_shortcut_commands(&app_name, &exe, shortcut_icon_location.as_deref())?;
+        embedded_tray_shortcut_commands(SHORTCUT_NAME, &exe, shortcut_icon_location.as_deref())?;
     let mut reg_value_desktop_shortcuts = "0".to_owned();
     let mut reg_value_start_menu_shortcuts = "0".to_owned();
     let mut reg_value_printer = "0".to_owned();
@@ -1653,7 +1658,7 @@ pub fn install_me(options: &str, path: String, silent: bool, debug: bool) -> Res
         shortcuts = format!(
             "copy /Y \"{}\\{}.lnk\" \"%PUBLIC%\\Desktop\\\"",
             tmp_path,
-            crate::get_app_name()
+            SHORTCUT_NAME
         );
         reg_value_desktop_shortcuts = "1".to_owned();
     }
@@ -1661,9 +1666,10 @@ pub fn install_me(options: &str, path: String, silent: bool, debug: bool) -> Res
         shortcuts = format!(
             "{shortcuts}
 md \"{start_menu}\"
-copy /Y \"{tmp_path}\\{app_name}.lnk\" \"{start_menu}\\\"
-copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{start_menu}\\\"
-     "
+copy /Y \"{tmp_path}\\{shortcut_name}.lnk\" \"{start_menu}\\\"
+copy /Y \"{tmp_path}\\Uninstall {shortcut_name}.lnk\" \"{start_menu}\\\"
+     ",
+            shortcut_name = SHORTCUT_NAME
         );
         reg_value_start_menu_shortcuts = "1".to_owned();
     }
@@ -1685,10 +1691,11 @@ copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{start_menu}\\\"
     // Note: without if exist, the bat may exit in advance on some Windows7 https://github.com/rustdesk/rustdesk/issues/895
     let dels = format!(
         "
-if exist \"{tmp_path}\\{app_name}.lnk\" del /f /q \"{tmp_path}\\{app_name}.lnk\"
-if exist \"{tmp_path}\\Uninstall {app_name}.lnk\" del /f /q \"{tmp_path}\\Uninstall {app_name}.lnk\"
-if exist \"{tmp_path}\\{app_name} Tray.lnk\" del /f /q \"{tmp_path}\\{app_name} Tray.lnk\"
-        "
+if exist \"{tmp_path}\\{shortcut_name}.lnk\" del /f /q \"{tmp_path}\\{shortcut_name}.lnk\"
+if exist \"{tmp_path}\\Uninstall {shortcut_name}.lnk\" del /f /q \"{tmp_path}\\Uninstall {shortcut_name}.lnk\"
+if exist \"{tmp_path}\\{shortcut_name} Tray.lnk\" del /f /q \"{tmp_path}\\{shortcut_name} Tray.lnk\"
+        ",
+        shortcut_name = SHORTCUT_NAME
     );
     let src_exe = cur_exe.clone();
 
@@ -1704,8 +1711,8 @@ if exist \"{tmp_path}\\{app_name} Tray.lnk\" del /f /q \"{tmp_path}\\{app_name} 
     } else {
         format!("
 {tray_shortcut_commands}
-copy /Y \"{tmp_path}\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\\"
-")
+copy /Y \"{tmp_path}\\{shortcut_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\\"
+", shortcut_name = SHORTCUT_NAME)
     };
 
     let install_remote_printer = if install_printer {
@@ -1745,7 +1752,7 @@ reg add {subkey} /f /v WindowsInstaller /t REG_DWORD /d 0
 {uninstall_shortcut_commands}
 {tray_shortcuts}
 {shortcuts}
-copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
+copy /Y \"{tmp_path}\\Uninstall {shortcut_name}.lnk\" \"{path}\\\"
 {dels}
 {import_config}
 {after_install}
@@ -1766,6 +1773,7 @@ copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
         dels = if debug { "" } else { &dels },
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
         import_config = get_import_config(&exe),
+        shortcut_name = SHORTCUT_NAME,
     );
     run_cmds(cmds, debug, "install")?;
     run_after_run_cmds(silent);
@@ -1849,12 +1857,12 @@ fn get_uninstall(kill_self: bool, uninstall_printer: bool) -> ResultType<String>
     {uninstall_amyuni_idd}
     if exist \"{path}\" rd /s /q \"{path}\"
     if exist \"{start_menu}\" rd /s /q \"{start_menu}\"
-    if exist \"%PUBLIC%\\Desktop\\{app_name}.lnk\" del /f /q \"%PUBLIC%\\Desktop\\{app_name}.lnk\"
-    if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\"
+    if exist \"%PUBLIC%\\Desktop\\{shortcut_name}.lnk\" del /f /q \"%PUBLIC%\\Desktop\\{shortcut_name}.lnk\"
+    if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{shortcut_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{shortcut_name} Tray.lnk\"
     ",
         before_uninstall=get_before_uninstall(kill_self),
         uninstall_amyuni_idd=get_uninstall_amyuni_idd(),
-        app_name = crate::get_app_name(),
+        shortcut_name = SHORTCUT_NAME,
     ))
 }
 
@@ -3290,12 +3298,13 @@ pub fn uninstall_service(show_new_window: bool, _: bool) -> bool {
     chcp 65001
     sc stop {app_name}
     sc delete {app_name}
-    if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\"
+    if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{shortcut_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{shortcut_name} Tray.lnk\"
     taskkill /F /IM {broker_exe}
     taskkill /F /IM {app_name}.exe{filter}
     ",
         app_name = crate::get_app_name(),
         broker_exe = WIN_TOPMOST_INJECTED_PROCESS_EXE,
+        shortcut_name = SHORTCUT_NAME,
     );
     if let Err(err) = run_cmds(cmds, false, "uninstall") {
         Config::set_option("stop-service".into(), "".into());
@@ -3322,19 +3331,20 @@ fn get_install_service_commands(path: &str, exe: &str) -> ResultType<String> {
         validate_install_value(icon)?;
     }
     let tray_shortcut_commands =
-        embedded_tray_shortcut_commands(&app_name, exe, shortcut_icon_location.as_deref())?;
+        embedded_tray_shortcut_commands(SHORTCUT_NAME, exe, shortcut_icon_location.as_deref())?;
     let filter = format!(" /FI \"PID ne {}\"", get_current_pid());
     Ok(format!(
         "
 chcp 65001
 taskkill /F /IM {app_name}.exe{filter}
 {tray_shortcut_commands}
-copy /Y \"%RUSTDESK_OUTPUT_DIR%\\{app_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\\"
+copy /Y \"%RUSTDESK_OUTPUT_DIR%\\{shortcut_name} Tray.lnk\" \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\\"
 {import_config}
 {create_service}
     ",
         import_config = get_import_config(exe),
         create_service = get_create_service(exe),
+        shortcut_name = SHORTCUT_NAME,
     ))
 }
 
@@ -3943,8 +3953,8 @@ fn get_create_service(exe: &str) -> String {
     let stop = Config::get_option("stop-service") == "Y";
     if stop {
         format!("
-if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name} Tray.lnk\"
-", app_name = crate::get_app_name())
+if exist \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{shortcut_name} Tray.lnk\" del /f /q \"%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{shortcut_name} Tray.lnk\"
+", shortcut_name = SHORTCUT_NAME)
     } else {
         let exe = escape_nested_cmd_ampersands(exe);
         format!("

@@ -3883,25 +3883,32 @@ impl LoginConfigHandler {
             avatar,
             ..Default::default()
         };
-        match self.conn_type {
-            ConnType::FILE_TRANSFER => lr.set_file_transfer(FileTransfer {
-                dir: self.get_remote_dir(),
-                show_hidden: !self.get_option("remote_show_hidden").is_empty(),
-                ..Default::default()
-            }),
-            ConnType::VIEW_CAMERA => lr.set_view_camera(Default::default()),
-            ConnType::PORT_FORWARD | ConnType::RDP => lr.set_port_forward(PortForward {
-                host: self.port_forward.0.clone(),
-                port: self.port_forward.1,
-                multiplex: self.port_forward_multiplex,
-                ..Default::default()
-            }),
-            ConnType::TERMINAL => {
-                let mut terminal = Terminal::new();
-                terminal.service_id = self.get_option(self.get_key_terminal_service_id());
-                lr.set_terminal(terminal);
+        // Z远程协助: a session flagged via the "zremote_config_info" option asks for
+        // a one-shot hardware/software info query. Transport uses the default conn_type
+        // (punch-hole/rendezvous unchanged); only the LoginRequest union differs.
+        if self.get_option("zremote_config_info") == "Y" {
+            lr.set_config_info(Default::default());
+        } else {
+            match self.conn_type {
+                ConnType::FILE_TRANSFER => lr.set_file_transfer(FileTransfer {
+                    dir: self.get_remote_dir(),
+                    show_hidden: !self.get_option("remote_show_hidden").is_empty(),
+                    ..Default::default()
+                }),
+                ConnType::VIEW_CAMERA => lr.set_view_camera(Default::default()),
+                ConnType::PORT_FORWARD | ConnType::RDP => lr.set_port_forward(PortForward {
+                    host: self.port_forward.0.clone(),
+                    port: self.port_forward.1,
+                    multiplex: self.port_forward_multiplex,
+                    ..Default::default()
+                }),
+                ConnType::TERMINAL => {
+                    let mut terminal = Terminal::new();
+                    terminal.service_id = self.get_option(self.get_key_terminal_service_id());
+                    lr.set_terminal(terminal);
+                }
+                _ => {}
             }
-            _ => {}
         }
 
         let mut msg_out = Message::new();

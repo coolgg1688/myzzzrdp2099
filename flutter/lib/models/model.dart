@@ -887,6 +887,14 @@ class FfiModel with ChangeNotifier {
     final text = evt['text'];
     final link = evt['link'];
 
+    // Z远程协助: config-info payload — forward to the page, never show a dialog
+    // and never let the offline/retry heuristics treat it as an error.
+    if (type == 'zremote66-config-info') {
+      dialogManager.dismissAll();
+      ConfigInfoController.instance.update(text ?? '');
+      return;
+    }
+
     // The peer-gone detector reconnects under `restarting-show` rather than an error title, so
     // it needs naming here too. By its own title, not the type: an explicitly restarted remote
     // device reaches the same type from a path this change does not touch.
@@ -2262,6 +2270,14 @@ class CanvasModel with ChangeNotifier {
   bool _bumpMouseIsWorking = true;
   ViewStyle _lastViewStyle = ViewStyle.defaultViewStyle();
 
+  // Z远程协助/zremote66: one-time auto preset of the initial view style.
+  // On the first frame of a connection, the initial display mode is chosen
+  // automatically (fit-to-window when the remote is larger than the local
+  // canvas in either dimension, original/100% otherwise). This runs at most
+  // once per session; afterwards the user's manual menu/shortcut choice and
+  // any later resize must never be overridden. Reset in clear() per session.
+  bool _initialViewStylePresetDone = false;
+
   Timer? _timerMobileFocusCanvasCursor;
   Timer? _timerMobileRestoreCanvasOffset;
   Offset? _offsetBeforeMobileSoftKeyboard;
@@ -2375,7 +2391,52 @@ class CanvasModel with ChangeNotifier {
 
   updateSize() => _size = getSize();
 
+  /// Z远程协助/zremote66: automatically pick the initial display mode once,
+  /// at the moment the remote picture first shows.
+  ///
+  /// - Remote (controlled) width OR height exceeds the local (controller)
+  ///   canvas size in the corresponding dimension -> [kRemoteViewStyleAdaptive]
+  ///   (fit to window, auto-scaled).
+  /// - Remote width AND height are both <= the local canvas ->
+  ///   [kRemoteViewStyleOriginal] (100%, no scaling).
+  ///
+  /// This only runs when BOTH the remote resolution (FFI.rect, set once the
+  /// peer display info / first frame arrives) and the local canvas size
+  /// (window/page area, via updateSize/getSize) are known. It is guarded
+  /// by _initialViewStylePresetDone so it fires at most once per session; it
+  /// intentionally does NOT re-run on later window resizes, display switches, or
+  /// manual menu/shortcut changes.
+  Future<void> _presetInitialViewStyleOnce() async {
+    if (_initialViewStylePresetDone) return;
+    final ffi = parent.target;
+    if (ffi == null) return;
+    // Scope this to remote-desktop sessions only; do not auto-preset the view
+    // style for view-camera / file-transfer / port-forward / terminal sessions.
+    if (ffi.connType != ConnType.defaultConn) return;
+    // Remote resolution not known yet -> wait for a later updateViewStyle call.
+    final rect = ffi.ffiModel.rect;
+    if (rect == null) return;
+    // Refresh local canvas area; skip until it has actually been laid out.
+    updateSize();
+    if (size.width <= 0 || size.height <= 0) return;
+
+    final remoteW = rect.width;
+    final remoteH = rect.height;
+    final desired = (remoteW > size.width || remoteH > size.height)
+        ? kRemoteViewStyleAdaptive
+        : kRemoteViewStyleOriginal;
+
+    final current = await bind.sessionGetViewStyle(sessionId: sessionId);
+    if (current != desired) {
+      await bind.sessionSetViewStyle(sessionId: sessionId, value: desired);
+    }
+    _initialViewStylePresetDone = true;
+  }
+
   updateViewStyle({refreshMousePos = true, notify = true}) async {
+    // Z远程协助: apply the one-time initial preset before reading the stored
+    // style, so the same updateViewStyle() invocation then renders it.
+    await _presetInitialViewStyleOnce();
     final style = await bind.sessionGetViewStyle(sessionId: sessionId);
     if (style == null) {
       return;
@@ -2766,6 +2827,8 @@ class CanvasModel with ChangeNotifier {
     _scale = 1.0;
     _locked = false;
     _lastViewStyle = ViewStyle.defaultViewStyle();
+    // Z远程协助: allow a fresh one-time preset on the next connection.
+    _initialViewStylePresetDone = false;
     _timerMobileFocusCanvasCursor?.cancel();
     _timerMobileRestoreCanvasOffset?.cancel();
     _offsetBeforeMobileSoftKeyboard = null;
@@ -4107,6 +4170,7 @@ class FFI {
     bool isPortForward = false,
     bool isRdp = false,
     bool isTerminal = false,
+    bool isConfigInfo = false,
     String? switchUuid,
     String? password,
     bool? isSharedPassword,
@@ -4161,6 +4225,13 @@ class FFI {
         isSharedPassword: isSharedPassword ?? false,
         connToken: connToken,
       );
+      // Z远程协助: deterministically (re)set the config-info flag on EVERY new
+      // session, so a prior "Y" never leaks into a later plain connection. The
+      // Rust side uses this option to decide whether to set the config_info union.
+      bind.sessionPeerOption(
+          sessionId: sessionId,
+          name: "zremote_config_info",
+          value: isConfigInfo ? "Y" : "");
     } else if (display != null) {
       if (displays == null) {
         debugPrint(
