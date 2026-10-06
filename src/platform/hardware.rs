@@ -184,15 +184,15 @@ mod win {
     pub fn memory() -> Value {
         let mut sys = System::new_all();
         sys.refresh_memory();
-        // sysinfo returns KiB; convert to bytes.
+        // sysinfo returns KiB; convert to bytes, then to MB.
         let total_b = sys.total_memory() as f64 * 1024.0;
         let avail_b = sys.available_memory() as f64 * 1024.0;
         let used_b = (total_b - avail_b).max(0.0);
         let brand = smbios_memory_brand();
         json!({
-            "total_gb": r1(total_b / 1073741824.0),
-            "available_gb": r1(avail_b / 1073741824.0),
-            "used_gb": r1(used_b / 1073741824.0),
+            "total_mb": r1(total_b / 1048576.0),
+            "available_mb": r1(avail_b / 1048576.0),
+            "used_mb": r1(used_b / 1048576.0),
             "brand": brand,
         })
     }
@@ -205,6 +205,10 @@ mod win {
         let mut free_b = 0f64;
         let mut out: Vec<Value> = Vec::new();
         for d in disks.list() {
+            let fs = d.file_system().to_string_lossy().into_owned();
+            if is_virtual_fs(&fs) {
+                continue;
+            }
             let total = d.total_space() as f64;
             let avail = d.available_space() as f64;
             let used = (total - avail).max(0.0);
@@ -692,7 +696,9 @@ mod win {
 
             let mut out: Vec<Value> = Vec::new();
             let entry_size = std::mem::size_of::<ENUM_SERVICE_STATUS_PROCESSW>();
-            for i in 0..returned as usize {
+            // 防御：以实际缓冲容量为上限，杜绝枚举数量超过缓冲区导致的越界读。
+            let max_entries = if entry_size == 0 { 0 } else { buf.len() / entry_size };
+            for i in 0..(returned as usize).min(max_entries) {
                 if out.len() >= super::MAX_SERVICES {
                     break;
                 }
@@ -814,22 +820,25 @@ mod win {
 // ---------------------------------------------------------------------------
 #[cfg(windows)]
 fn collect() -> Value {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
     use windows::Win32::System::SystemInformation::GetTickCount64;
     let uptime_s = unsafe { GetTickCount64() } as f64 / 1000.0;
+    // Z远程协助: 每个采集项独立 catch_unwind，避免任一项 panic 拖垮整个被控端进程
+    // （安卓获取 win 配置时 win 自动退出即此类崩溃）。
     json!({
-        "os": win::os_info(),
-        "cpu": win::cpu_info(),
-        "memory": win::memory(),
-        "disk": win::disk(),
-        "gpu": win::gpu(),
-        "board": win::board_info(),
-        "machine": win::machine_info(),
-        "screen": win::screen(),
+        "os": catch_unwind(AssertUnwindSafe(win::os_info)).unwrap_or_else(|_| json!({})),
+        "cpu": catch_unwind(AssertUnwindSafe(win::cpu_info)).unwrap_or_else(|_| json!({})),
+        "memory": catch_unwind(AssertUnwindSafe(win::memory)).unwrap_or_else(|_| json!({})),
+        "disk": catch_unwind(AssertUnwindSafe(win::disk)).unwrap_or_else(|_| json!({})),
+        "gpu": catch_unwind(AssertUnwindSafe(win::gpu)).unwrap_or_else(|_| String::new()),
+        "board": catch_unwind(AssertUnwindSafe(win::board_info)).unwrap_or_else(|_| json!({})),
+        "machine": catch_unwind(AssertUnwindSafe(win::machine_info)).unwrap_or_else(|_| json!({})),
+        "screen": catch_unwind(AssertUnwindSafe(win::screen)).unwrap_or_else(|_| String::new()),
         "uptime": format_up(uptime_s),
-        "users": win::users(),
-        "software": win::software(),
-        "services": win::services(),
-        "net": win::net(),
+        "users": catch_unwind(AssertUnwindSafe(win::users)).unwrap_or_else(|_| json!([])),
+        "software": catch_unwind(AssertUnwindSafe(win::software)).unwrap_or_else(|_| json!([])),
+        "services": catch_unwind(AssertUnwindSafe(win::services)).unwrap_or_else(|_| json!([])),
+        "net": catch_unwind(AssertUnwindSafe(win::net)).unwrap_or_else(|_| json!([])),
     })
 }
 
@@ -1296,19 +1305,73 @@ fn collect() -> Value {
 
 // Z远程协助: 跨平台共享 sysinfo 采集（windows/linux/macos/android 统一），
 // 替代各平台脆弱的手写 /proc、命令、FFI 实现，避免采集 panic 导致配置窗口白屏。
+// Android: sysinfo's total_memory() returns bytes (not KiB) on this target,
+// which was being multiplied again by 1024 and produced absurd "GB" values.
+// Read /proc/meminfo directly (kB) for a correct MB figure.
+#[cfg(target_os = "android")]
+fn meminfo_kb(key: &str) -> f64 {
+    let s = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    for line in s.lines() {
+        if let Some(rest) = line.strip_prefix(key) {
+            if let Some(eq) = rest.find(':') {
+                let v: f64 = rest[eq + 1..]
+                    .trim()
+                    .trim_end_matches("kB")
+                    .trim()
+                    .parse()
+                    .unwrap_or(0.0);
+                return v;
+            }
+        }
+    }
+    0.0
+}
+
+#[cfg(target_os = "android")]
+fn sys_memory() -> Value {
+    let total_kb = meminfo_kb("MemTotal");
+    let mut avail_kb = meminfo_kb("MemAvailable");
+    if avail_kb <= 0.0 {
+        avail_kb = meminfo_kb("MemFree");
+    }
+    let total_mb = total_kb / 1024.0;
+    let avail_mb = avail_kb / 1024.0;
+    json!({
+        "total_mb": r1(total_mb),
+        "available_mb": r1(avail_mb),
+        "used_mb": r1((total_mb - avail_mb).max(0.0)),
+        "brand": "",
+    })
+}
+
+#[cfg(not(target_os = "android"))]
 fn sys_memory() -> Value {
     use sysinfo::System;
     let mut sys = System::new_all();
     sys.refresh_memory();
-    // sysinfo 内存单位为 KiB，转字节。
+    // sysinfo 内存单位为 KiB，先转字节再转 MB。
     let total_b = sys.total_memory() as f64 * 1024.0;
     let avail_b = sys.available_memory() as f64 * 1024.0;
     json!({
-        "total_gb": r1(total_b / 1073741824.0),
-        "available_gb": r1(avail_b / 1073741824.0),
-        "used_gb": r1((total_b - avail_b).max(0.0) / 1073741824.0),
+        "total_mb": r1(total_b / 1048576.0),
+        "available_mb": r1(avail_b / 1048576.0),
+        "used_mb": r1((total_b - avail_b).max(0.0) / 1048576.0),
         "brand": "",
     })
+}
+
+// Virtual/pseudo filesystems that sysinfo exposes as "disks" but are not real
+// physical storage (the cause of "硬盘列出很多 / 与实际硬盘数不符").
+fn is_virtual_fs(fs: &str) -> bool {
+    let fs = fs.to_lowercase();
+    matches!(
+        fs.as_str(),
+        "tmpfs" | "devtmpfs" | "proc" | "procfs" | "sysfs" | "devpts" | "overlay"
+            | "overlayfs" | "shm" | "mqueue" | "cgroup" | "cgroup2" | "pstore" | "bpf"
+            | "tracefs" | "debugfs" | "securityfs" | "configfs" | "binfmt_misc"
+            | "fusectl" | "autofs" | "hugetlbfs" | "nsfs" | "ramfs" | "rpc_pipefs"
+            | "selinuxfs" | "squashfs" | "nfsd"
+    )
 }
 
 fn sys_disks() -> Value {
@@ -1318,6 +1381,10 @@ fn sys_disks() -> Value {
     let mut free_b = 0f64;
     let mut out: Vec<Value> = Vec::new();
     for d in disks.list() {
+        let fs = d.file_system().to_string_lossy().into_owned();
+        if is_virtual_fs(&fs) {
+            continue;
+        }
         let total = d.total_space() as f64;
         let avail = d.available_space() as f64;
         let used = (total - avail).max(0.0);

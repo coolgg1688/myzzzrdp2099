@@ -485,19 +485,34 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
     }
 
     // group 4: 内存（总/剩余必显示，已用>0 才显示，brand 非空追加品牌）
+    // 单位统一为 MB（后端输出 total_mb/available_mb/used_mb）；兼容旧被控端 total_gb 显示 GB。
     {
-      final total = _toGb(mem['total_gb']);
-      final used = _toGb(mem['used_gb']);
-      final avail = _toGb(mem['available_gb']);
+      final totalMb = mem['total_mb'] != null ? _toGb(mem['total_mb']) : null;
+      final usedMb = mem['used_mb'] != null ? _toGb(mem['used_mb']) : null;
+      final availMb = mem['available_mb'] != null ? _toGb(mem['available_mb']) : null;
       final brand = mem['brand']?.toString() ?? '';
-      if (total > 0 || used > 0 || avail > 0 || brand.isNotEmpty) {
+      if (totalMb != null || usedMb != null || availMb != null) {
         final parts = <String>[];
-        if (total > 0) parts.add('总:${_fmtGb(total)}GB');
-        if (avail > 0) parts.add('剩余:${_fmtGb(avail)}GB');
-        if (used > 0) parts.add('已用:${_fmtGb(used)}GB');
+        if (totalMb != null && totalMb > 0) parts.add('总:${_fmtGb(totalMb)}MB');
+        if (availMb != null && availMb > 0) parts.add('剩余:${_fmtGb(availMb)}MB');
+        if (usedMb != null && usedMb > 0) parts.add('已用:${_fmtGb(usedMb)}MB');
         var value = parts.join(' ');
         if (brand.isNotEmpty) value += ' (品牌:$brand)';
         rows.add(_HwRow(label: '内存', value: value, group: 4));
+      } else {
+        // 旧被控端格式（total_gb 等），按 GB 显示。
+        final total = _toGb(mem['total_gb']);
+        final used = _toGb(mem['used_gb']);
+        final avail = _toGb(mem['available_gb']);
+        if (total > 0 || used > 0 || avail > 0 || brand.isNotEmpty) {
+          final parts = <String>[];
+          if (total > 0) parts.add('总:${_fmtGb(total)}GB');
+          if (avail > 0) parts.add('剩余:${_fmtGb(avail)}GB');
+          if (used > 0) parts.add('已用:${_fmtGb(used)}GB');
+          var value = parts.join(' ');
+          if (brand.isNotEmpty) value += ' (品牌:$brand)';
+          rows.add(_HwRow(label: '内存', value: value, group: 4));
+        }
       }
     }
 
