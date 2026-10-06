@@ -89,6 +89,8 @@ totp-rs = { version = "5.4", default-features = false, features = ["gen_secret",
 stunclient = "0.4"
 kcp-sys= { git = "https://github.com/rustdesk-org/kcp-sys", branch = "rustdesk-patches" }
 reqwest = { version = "0.12", features = ["blocking", "socks", "json", "native-tls", "rustls-tls", "rustls-tls-native-roots", "gzip", "zstd"], default-features=false }
+# Z远程协助: 统一软硬件采集用 sysinfo（Rust 最强跨平台硬件库）。支持 windows/linux/macos/android。
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk", "network", "user", "multithread", "windows"] }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # https://github.com/rustdesk/rustdesk/discussions/10197, not use cpal on linux
@@ -153,7 +155,6 @@ windows = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 winreg = "0.11"
-sysinfo = { version = "0.33", default-features = false, features = ["system", "disk", "network", "user", "multithread", "windows"] }
 windows-service = "0.6"
 virtual_display = { path = "libs/virtual_display" }
 remote_printer = { path = "libs/remote_printer" }

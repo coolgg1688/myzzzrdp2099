@@ -875,78 +875,8 @@ fn collect() -> Value {
     let cores = num_cpus::get_physical() as i64;
     let cpu = json!({"model": cpu_model, "cores": cores, "threads": threads, "freq_mhz": freq as i64});
 
-    let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
-    let mut total_kb: f64 = 0.0;
-    let mut avail_kb: f64 = 0.0;
-    for line in meminfo.lines() {
-        if let Some(rest) = line.strip_prefix("MemTotal:") {
-            total_kb = to_f64(rest.replace("kB", "").trim());
-        } else if let Some(rest) = line.strip_prefix("MemAvailable:") {
-            avail_kb = to_f64(rest.replace("kB", "").trim());
-        }
-    }
-    let memory = json!({
-        "total_gb": r1(total_kb/1024.0/1024.0),
-        "available_gb": r1(avail_kb/1024.0/1024.0),
-        "used_gb": r1(((total_kb - avail_kb).max(0.0))/1024.0/1024.0),
-        "brand": "",
-    });
-
-    let mountinfo = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
-    let real_fs = ["ext2","ext3","ext4","xfs","btrfs","f2fs","ntfs","vfat","zfs","bfs","jfs","reiserfs","ufs","apfs","exfat"];
-    let mut by_dev: HashMap<String, Vec<Value>> = HashMap::new();
-    let mut seen_mnt: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for line in mountinfo.lines() {
-        let f: Vec<&str> = line.split_whitespace().collect();
-        if f.len() < 3 { continue; }
-        let dev = f[0];
-        let mnt = f[1];
-        let fst = f[2];
-        if !dev.starts_with("/dev/") { continue; }
-        if !real_fs.contains(&fst) { continue; }
-        if !seen_mnt.insert(mnt.to_string()) { continue; }
-        let out = run(&["df", "-B1", mnt]);
-        let mut tb = 0f64; let mut fb = 0f64;
-        for l in out.lines().skip(1) {
-            let p: Vec<&str> = l.split_whitespace().collect();
-            if p.len() >= 4 {
-                tb = to_f64(p[1]);
-                fb = to_f64(p[3]);
-            }
-        }
-        let part = json!({
-            "name": dev.to_string(),
-            "label": mnt.to_string(),
-            "total_gb": r1(tb/1073741824.0),
-            "free_gb": r1(fb/1073741824.0),
-            "used_gb": r1(((tb-fb).max(0.0))/1073741824.0),
-        });
-        let basename = dev.strip_prefix("/dev/").unwrap_or(dev);
-        let phys = basename.trim_end_matches(|c: char| c.is_ascii_digit());
-        by_dev.entry(phys.to_string()).or_default().push(part);
-    }
-    let mut disks: Vec<Value> = Vec::new();
-    let mut grand_t = 0f64; let mut grand_f = 0f64;
-    for (dev, parts) in by_dev {
-        let mut dt = 0f64; let mut df = 0f64;
-        for p in &parts {
-            if let Some(t) = p.get("total_gb").and_then(|v| v.as_f64()) { dt += t; }
-            if let Some(f) = p.get("free_gb").and_then(|v| v.as_f64()) { df += f; }
-        }
-        grand_t += dt; grand_f += df;
-        let model = std::fs::read_to_string(format!("/sys/block/{}/device/model", dev))
-            .unwrap_or_default().trim().to_string();
-        disks.push(json!({
-            "name": dev, "model": model,
-            "total_gb": r1(dt), "free_gb": r1(df), "used_gb": r1((dt-df).max(0.0)),
-            "partitions": parts,
-        }));
-    }
-    let disk = json!({
-        "total_gb": r1(grand_t), "free_gb": r1(grand_f),
-        "used_gb": r1((grand_t-grand_f).max(0.0)),
-        "disks": disks,
-    });
+    let memory = sys_memory();
+    let disk = sys_disks();
 
     let gpu = run(&["sh", "-c", "lspci -mm 2>/dev/null | grep -iE 'vga|3d|display' | cut -d'\"' -f2 | paste -sd '; ' -"]);
 
@@ -1014,7 +944,7 @@ fn collect() -> Value {
         }
     }
 
-    let net = collect_linux_net();
+    let net = sys_networks();
 
     json!({
         "os": os, "cpu": cpu, "memory": memory, "disk": disk,
@@ -1098,68 +1028,8 @@ fn collect() -> Value {
     let freq: i64 = run(&["sysctl", "-n", "hw.cpufrequency"]).parse().unwrap_or(0) / 1_000_000;
     let cpu = json!({"model": cpu_model, "cores": physical, "threads": logical, "freq_mhz": freq});
 
-    let mem_bytes: f64 = run(&["sysctl", "-n", "hw.memsize"]).parse().unwrap_or(0.0);
-    let page_size: f64 = run(&["sysctl", "-n", "hw.pagesize"]).parse().unwrap_or(4096.0);
-    let vmstat = run(&["sh", "-c", "vm_stat | head -20"]);
-    let mut free_pages: f64 = 0.0;
-    let mut inactive: f64 = 0.0;
-    for line in vmstat.lines() {
-        let l = line.trim().trim_end_matches('.');
-        if let Some(rest) = l.strip_prefix("Pages free:") {
-            free_pages = rest.trim().parse().unwrap_or(0.0);
-        } else if let Some(rest) = l.strip_prefix("Pages inactive:") {
-            inactive = rest.trim().parse().unwrap_or(0.0);
-        }
-    }
-    let avail_b = (free_pages + inactive) * page_size;
-    let memory = json!({
-        "total_gb": r1(mem_bytes/1073741824.0),
-        "available_gb": r1(avail_b/1073741824.0),
-        "used_gb": r1(((mem_bytes-avail_b).max(0.0))/1073741824.0),
-        "brand": "",
-    });
-
-    let df = run(&["df", "-k"]);
-    let mut by_dev: HashMap<String, Vec<Value>> = HashMap::new();
-    let mut grand_t = 0f64; let mut grand_f = 0f64;
-    for line in df.lines().skip(1) {
-        let p: Vec<&str> = line.split_whitespace().collect();
-        if p.len() < 9 { continue; }
-        let dev = p[0];
-        if !dev.starts_with("/dev/disk") { continue; }
-        let blocks: f64 = p[1].parse().unwrap_or(0.0);
-        let avail_k: f64 = p[3].parse().unwrap_or(0.0);
-        let mnt = p[8..].join(" ");
-        let tb = blocks * 1024.0;
-        let fb = avail_k * 1024.0;
-        let part = json!({
-            "name": mnt, "label": mnt,
-            "total_gb": r1(tb/1073741824.0),
-            "free_gb": r1(fb/1073741824.0),
-            "used_gb": r1(((tb-fb).max(0.0))/1073741824.0),
-        });
-        by_dev.entry(dev.to_string()).or_default().push(part);
-        grand_t += tb; grand_f += fb;
-    }
-    let mut disks: Vec<Value> = Vec::new();
-    for (dev, parts) in by_dev {
-        let mut dt = 0f64; let mut df_ = 0f64;
-        for p in &parts {
-            if let Some(t) = p.get("total_gb").and_then(|v| v.as_f64()) { dt += t; }
-            if let Some(f) = p.get("free_gb").and_then(|v| v.as_f64()) { df_ += f; }
-        }
-        disks.push(json!({
-            "name": dev, "model": "",
-            "total_gb": r1(dt), "free_gb": r1(df_), "used_gb": r1((dt-df_).max(0.0)),
-            "partitions": parts,
-        }));
-    }
-    let disk = json!({
-        "total_gb": r1(grand_t/1073741824.0),
-        "free_gb": r1(grand_f/1073741824.0),
-        "used_gb": r1(((grand_t-grand_f).max(0.0))/1073741824.0),
-        "disks": disks,
-    });
+    let memory = sys_memory();
+    let disk = sys_disks();
 
     let gpu = run(&["sh", "-c", "system_profiler SPDisplaysDataType 2>/dev/null | grep 'Chipset Model' | cut -d: -f2 | paste -sd '; ' -"]);
     let board_model = run(&["sysctl", "-n", "hw.model"]);
@@ -1220,7 +1090,7 @@ fn collect() -> Value {
         }
     }
 
-    let net = collect_macos_net();
+    let net = sys_networks();
 
     json!({
         "os": os, "cpu": cpu, "memory": memory, "disk": disk,
@@ -1316,50 +1186,8 @@ fn collect() -> Value {
     }
     let cpu = json!({"model": cpu_model, "cores": 0, "threads": threads, "freq_mhz": 0});
 
-    let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
-    let mut total_kb: f64 = 0.0;
-    let mut avail_kb: f64 = 0.0;
-    for line in meminfo.lines() {
-        if let Some(r) = line.strip_prefix("MemTotal:") {
-            total_kb = to_f64(r.replace("kB", "").trim());
-        } else if let Some(r) = line.strip_prefix("MemAvailable:") {
-            avail_kb = to_f64(r.replace("kB", "").trim());
-        }
-    }
-    let memory = json!({
-        "total_gb": r1(total_kb/1024.0/1024.0),
-        "available_gb": r1(avail_kb/1024.0/1024.0),
-        "used_gb": r1(((total_kb-avail_kb).max(0.0))/1024.0/1024.0),
-        "brand": "",
-    });
-
-    let df = run(&["df", "-B1", "/data"]);
-    let mut disk_total: f64 = 0.0;
-    let mut disk_free: f64 = 0.0;
-    for line in df.lines() {
-        let p: Vec<&str> = line.split_whitespace().collect();
-        if p.len() >= 6 && (p[5].trim() == "/" || p[5].trim() == "/data") {
-            disk_total = to_f64(p[1]);
-            disk_free = to_f64(p[3]);
-        }
-    }
-    let disk = json!({
-        "total_gb": r1(disk_total/1073741824.0),
-        "free_gb": r1(disk_free/1073741824.0),
-        "used_gb": r1(((disk_total-disk_free).max(0.0))/1073741824.0),
-        "disks": [json!({
-            "name": "/data", "model": "",
-            "total_gb": r1(disk_total/1073741824.0),
-            "free_gb": r1(disk_free/1073741824.0),
-            "used_gb": r1(((disk_total-disk_free).max(0.0))/1073741824.0),
-            "partitions": [json!({
-                "name": "/data", "label": "",
-                "total_gb": r1(disk_total/1073741824.0),
-                "free_gb": r1(disk_free/1073741824.0),
-                "used_gb": r1(((disk_total-disk_free).max(0.0))/1073741824.0),
-            })],
-        })],
-    });
+    let memory = sys_memory();
+    let disk = sys_disks();
 
     let serial = prop("ro.serialno");
     let board = json!({"vendor": manufacturer, "model": model, "serial": serial});
@@ -1392,7 +1220,7 @@ fn collect() -> Value {
     }
 
     let services: Vec<Value> = Vec::new();
-    let net = collect_android_net();
+    let net = sys_networks();
 
     json!({
         "os": os, "cpu": cpu, "memory": memory, "disk": disk,
@@ -1464,6 +1292,79 @@ fn collect() -> Value {
         "screen": "", "uptime": "",
         "users": [], "software": [], "services": [], "net": [],
     })
+}
+
+// Z远程协助: 跨平台共享 sysinfo 采集（windows/linux/macos/android 统一），
+// 替代各平台脆弱的手写 /proc、命令、FFI 实现，避免采集 panic 导致配置窗口白屏。
+fn sys_memory() -> Value {
+    use sysinfo::System;
+    let mut sys = System::new_all();
+    sys.refresh_memory();
+    // sysinfo 内存单位为 KiB，转字节。
+    let total_b = sys.total_memory() as f64 * 1024.0;
+    let avail_b = sys.available_memory() as f64 * 1024.0;
+    json!({
+        "total_gb": r1(total_b / 1073741824.0),
+        "available_gb": r1(avail_b / 1073741824.0),
+        "used_gb": r1((total_b - avail_b).max(0.0) / 1073741824.0),
+        "brand": "",
+    })
+}
+
+fn sys_disks() -> Value {
+    use sysinfo::Disks;
+    let disks = Disks::new_with_refreshed_list();
+    let mut total_b = 0f64;
+    let mut free_b = 0f64;
+    let mut out: Vec<Value> = Vec::new();
+    for d in disks.list() {
+        let total = d.total_space() as f64;
+        let avail = d.available_space() as f64;
+        let used = (total - avail).max(0.0);
+        let mount: String = d.mount_point().to_string_lossy().into_owned();
+        let dev: String = d.name().to_string_lossy().into_owned();
+        total_b += total;
+        free_b += avail;
+        out.push(json!({
+            "name": if mount.is_empty() { dev.clone() } else { mount.clone() },
+            "model": dev,
+            "total_gb": r1(total / 1073741824.0),
+            "free_gb": r1(avail / 1073741824.0),
+            "used_gb": r1(used / 1073741824.0),
+            "partitions": [json!({
+                "name": mount,
+                "label": "",
+                "total_gb": r1(total / 1073741824.0),
+                "free_gb": r1(avail / 1073741824.0),
+                "used_gb": r1(used / 1073741824.0),
+            })],
+        }));
+    }
+    json!({
+        "total_gb": r1(total_b / 1073741824.0),
+        "free_gb": r1(free_b / 1073741824.0),
+        "used_gb": r1((total_b - free_b).max(0.0) / 1073741824.0),
+        "disks": out,
+    })
+}
+
+fn sys_networks() -> Value {
+    use sysinfo::Networks;
+    let mut networks = Networks::new_with_refreshed_list();
+    let _ = networks.refresh(false);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let _ = networks.refresh(false);
+    let mut out: Vec<Value> = Vec::new();
+    for (name, data) in networks.list() {
+        out.push(json!({
+            "name": name.clone(),
+            "mac": "",
+            "ip": "",
+            "rx_kbps": r1(data.received() as f64 / 0.5 / 1024.0),
+            "tx_kbps": r1(data.transmitted() as f64 / 0.5 / 1024.0),
+        }));
+    }
+    json!(out)
 }
 
 fn format_up(secs: f64) -> String {
