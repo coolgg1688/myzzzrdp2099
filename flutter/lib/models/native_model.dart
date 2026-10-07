@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
-import 'dart:isolate';
 import 'dart:ui' as ui;
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -34,9 +33,12 @@ typedef F5 = void Function(Pointer<Utf8>);
 typedef HandleEvent = Future<void> Function(Map<String, dynamic> evt);
 
 // Z远程协助: 在后台 isolate 内经地址重建 get_local_config_info / free_local_config_info 指针并调用。
+// 参数为 List<int> [getAddr, freeAddr] 以便经 compute() 跨 isolate 传递。
 // 返回 CString 文本；任何异常返回空串(前端 toast「暂不支持/失败」)，不拖垮进程。
-String _callConfigInfoByAddress(int getAddr, int freeAddr) {
+String _callConfigInfoByAddress(List<int> args) {
   try {
+    final getAddr = args[0];
+    final freeAddr = args.length > 1 ? args[1] : 0;
     final get =
         Pointer<NativeFunction<F4>>.fromAddress(getAddr).asFunction<F4Dart>();
     final p = get();
@@ -153,14 +155,16 @@ class PlatformFFI {
     }
   }
 
-  /// Z远程协助: 后台 isolate 采集本机配置——把底层函数指针地址传入 isolate 重建调用，
-  /// 避免同步 FFI(含注册表/服务/磁盘/网速/公网IP 采集)在 UI 线程阻塞导致「正在获取…无结果」。
+  /// Z远程协助: 后台采集本机配置——把底层函数指针地址传入 compute()。
+  /// native 平台 compute() 走后台 isolate，不阻塞 UI(注册表/服务/磁盘/网速/公网IP 采集
+  /// 原本同步 FFI 会卡死 UI 导致「正在获取…无结果」)；web 平台 compute() 同步执行，
+  /// 但 web 上符号缺失时 ptr 为 null 会直接返回空串，不会走到采集。
   Future<String> getLocalConfigInfoAsync() async {
     if (_get_local_config_info_ptr == null) return '';
     final getAddr = _get_local_config_info_ptr!.address;
     final freeAddr = _free_local_config_info_ptr?.address ?? 0;
     try {
-      return await Isolate.run(() => _callConfigInfoByAddress(getAddr, freeAddr));
+      return await compute(_callConfigInfoByAddress, <int>[getAddr, freeAddr]);
     } catch (_) {
       return '';
     }
