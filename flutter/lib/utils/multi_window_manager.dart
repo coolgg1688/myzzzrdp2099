@@ -399,6 +399,10 @@ class RustDeskMultiWindowManager {
     bool? forceRelay,
     String? connToken,
     bool waitForData = false,
+    // Z远程协助: 本机「查看本机配置」——主窗口 isolate 已同步拿到本机 JSON，
+    // 随窗口参数直接带给子窗口，避免依赖 kWindowEventConfigInfoData 广播的时序竞态
+    // (子窗口 MessageHandler 未就绪即广播会导致数据丢失 → 白屏一直转圈)。
+    Map<String, dynamic>? localData,
   }) async {
     // Z远程协助: 逆序复用已存在的配置信息窗口；对已关闭但残留的 windowId 做容错清理，
     // 避免 invokeMethod 抛 MissingPluginException/PlatformException 导致菜单点击无响应。
@@ -406,6 +410,13 @@ class RustDeskMultiWindowManager {
       try {
         if (await DesktopMultiWindow.invokeMethod(
             windowId, kWindowEventActiveSession, remoteId)) {
+          // 复用已有窗口时，若携带本机数据则直接补发，确保不因复用漏数据。
+          if (localData != null) {
+            try {
+              await DesktopMultiWindow.invokeMethod(
+                  windowId, kWindowEventConfigInfoData, localData);
+            } catch (_) {}
+          }
           return MultiWindowCallResult(windowId, null);
         }
       } catch (_) {
@@ -422,6 +433,8 @@ class RustDeskMultiWindowManager {
       // Z远程协助: waitForData=true 时子窗口不发起新连接，仅复用已有会话的数据通道。
       "waitForData": waitForData,
     };
+    // Z远程协助: 本机数据随窗口参数直达子窗口，子窗口 initState 直接渲染，无广播竞态。
+    if (localData != null) params.addAll(localData);
     final msg = jsonEncode(params);
     final windowId = await newSessionWindow(
         WindowType.ConfigInfo, remoteId, msg, _configInfoWindows, false);

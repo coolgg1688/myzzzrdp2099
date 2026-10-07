@@ -1418,13 +1418,62 @@ fn format_up(secs: f64) -> String {
 /// sample (two reads of InOctets/OutOctets separated by 500ms). This call runs
 /// synchronously inside a tokio worker; the 500ms cap keeps the blocking cost
 /// bounded.
+// Z远程协助: 采集 计算机名 / 本地IP / 互联网IP。全部带兜底，任何一步失败只返回空串，绝不崩溃。
+// - hostname: 平台环境变量/文件，纯 std。
+// - local_ip: UDP connect 技巧(不发送数据)，返回路由到公网的本地接口 IP，纯 std。
+// - public_ip: 尽力查询外部 IP 服务(短超时+catch_unwind)，失败留空。
+fn net_identity() -> (String, String, String) {
+    let hostname = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .or_else(|_| {
+            std::fs::read_to_string("/etc/hostname")
+                .map(|s| s.trim().to_string())
+                .ok()
+        })
+        .unwrap_or_default();
+
+    let mut local_ip = String::new();
+    if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if sock.connect("8.8.8.8:80").is_ok() {
+            if let Ok(a) = sock.local_addr() {
+                local_ip = a.ip().to_string();
+            }
+        }
+    }
+
+    let mut public_ip = String::new();
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        use std::time::Duration;
+        let c = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build();
+        let Ok(c) = c else { return String::new() };
+        let Ok(r) = c.get("https://api.ipify.org").send() else {
+            return String::new()
+        };
+        r.text().map(|t| t.trim().to_string()).unwrap_or_default()
+    }));
+    if let Ok(ip) = r {
+        public_ip = ip;
+    }
+
+    (hostname, local_ip, public_ip)
+}
+
 pub fn collect_config_info() -> String {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     // Z远程协助: 顶层 catch_unwind 兜底——即使 collect() 内部某处出现未预期 panic，
     // 也只会返回兜底 JSON，绝不拖垮整个被控端进程(修复"安卓获取 win 配置时 win 退出")。
-    let data = catch_unwind(AssertUnwindSafe(collect)).unwrap_or_else(|_| {
+    let mut data = catch_unwind(AssertUnwindSafe(collect)).unwrap_or_else(|_| {
         json!({"os": {}, "cpu": {}, "memory": {}, "disk": {}, "error": "采集失败"})
     });
+    // Z远程协助: 附加 计算机名/本地IP/互联网IP(供前端「操作系统」下方展示)。
+    if let Some(map) = data.as_object_mut() {
+        let (hn, li, pi) = net_identity();
+        map.insert("hostname".to_owned(), json!(hn));
+        map.insert("local_ip".to_owned(), json!(li));
+        map.insert("public_ip".to_owned(), json!(pi));
+    }
     match serde_json::to_string(&data) {
         Ok(s) => s,
         Err(_) => String::new(),

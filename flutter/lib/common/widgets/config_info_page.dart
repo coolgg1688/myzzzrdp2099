@@ -235,14 +235,20 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
   // Z远程协助: 桌面子窗口（非 macOS，macOS 有原生标题栏）使用自绘 42px
   // 标题栏 + 关闭按钮；移动端/其它情况保留默认 AppBar。
   bool get _useCustomTitleBar => isDesktop && !isMacOS;
+  // Z远程协助: 本机「查看本机配置」标题用「本机配置」，远程用「被控端配置信息」。
+  bool get _isLocalConfig => widget.params['local'] == true;
+  String get _windowTitle => _isLocalConfig ? '本机配置' : '被控端配置信息';
 
   @override
   void initState() {
     super.initState();
     ConfigInfoController.instance.reset();
-    // Z远程协助: waitForData 复用模式下不发起新连接——会话属于主窗口 isolate，
-    // 这里只保持 loading，等待主窗口通过 kWindowEventConfigInfoData 转发数据。
-    if (!widget.waitForData) {
+    // Z远程协助: 本机「查看本机配置」——数据已随窗口参数直达，直接渲染，不发起连接，
+    // 彻底规避子窗口 MessageHandler 未就绪时广播丢失导致的白屏/一直转圈。
+    final localText = widget.params['text']?.toString();
+    if (localText != null && localText.isNotEmpty) {
+      ConfigInfoController.instance.update(localText);
+    } else if (!widget.waitForData) {
       gFFI.ffiModel.updateEventListener(gFFI.sessionId, widget.id);
       gFFI.start(
         widget.id,
@@ -295,9 +301,9 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
       child: Row(
         children: [
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Text(
-              '被控端配置信息',
+              _windowTitle,
               style: TextStyle(color: Colors.white, fontSize: 14),
             ),
           ),
@@ -319,7 +325,7 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
       appBar: customTitleBar
           ? null
           : AppBar(
-              title: const Text('被控端配置信息'),
+              title: Text(_windowTitle),
             ),
       body: ChangeNotifierProvider.value(
         value: ConfigInfoController.instance,
@@ -441,6 +447,25 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
     ].where((s) => s.isNotEmpty).join(' ');
     if (osParts.isNotEmpty) {
       rows.add(_HwRow(label: '操作系统', value: osParts, group: 0));
+    }
+
+    // 计算机名(操作系统下方)
+    {
+      final hn = data['hostname']?.toString() ?? '';
+      if (hn.isNotEmpty) {
+        rows.add(_HwRow(label: '计算机名', value: hn, group: 0));
+      }
+    }
+    // IP地址: 本地IP / 互联网IP(操作系统下方)
+    {
+      final li = data['local_ip']?.toString() ?? '';
+      final pi = data['public_ip']?.toString() ?? '';
+      final ipParts = <String>[];
+      if (li.isNotEmpty) ipParts.add('本地IP:$li');
+      if (pi.isNotEmpty && pi != li) ipParts.add('互联网IP:$pi');
+      if (ipParts.isNotEmpty) {
+        rows.add(_HwRow(label: 'IP地址', value: ipParts.join('  '), group: 0));
+      }
     }
 
     // group 1: 厂家型号（machine.vendor / machine.model）

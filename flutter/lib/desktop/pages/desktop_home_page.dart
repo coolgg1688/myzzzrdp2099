@@ -429,10 +429,18 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         return;
       }
       final myId = gFFI.serverModel.serverId.text.trim();
+      // Z远程协助: 本机数据随窗口参数直达子窗口(不走广播竞态)，避免白屏一直转圈。
       await rustDeskWinManager.newConfigInfo(
-          myId.isEmpty ? '本机' : myId, waitForData: true);
+          myId.isEmpty ? '本机' : myId,
+          waitForData: true,
+          localData: {
+            'type': 'zremote66-config-info',
+            'text': json,
+            'local': true,
+          });
+      // 兜底: 若子窗口因极早期竞态未收到参数数据，此广播补一发，不影响主流程。
       await rustDeskWinManager.forwardToConfigInfoWindows(
-          {'type': 'zremote66-config-info', 'text': json});
+          {'type': 'zremote66-config-info', 'text': json, 'local': true});
     } catch (e) {
       debugPrint('查看本机配置失败: $e');
       showToast('查看本机配置失败');
