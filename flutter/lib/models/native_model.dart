@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:ui' as ui;
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -31,6 +32,27 @@ typedef F4Dart = Pointer<Utf8> Function();
 typedef F5Dart = Void Function(Pointer<Utf8>);
 typedef F5 = void Function(Pointer<Utf8>);
 typedef HandleEvent = Future<void> Function(Map<String, dynamic> evt);
+
+// Z远程协助: 在后台 isolate 内经地址重建 get_local_config_info / free_local_config_info 指针并调用。
+// 返回 CString 文本；任何异常返回空串(前端 toast「暂不支持/失败」)，不拖垮进程。
+String _callConfigInfoByAddress(int getAddr, int freeAddr) {
+  try {
+    final get =
+        Pointer<NativeFunction<F4>>.fromAddress(getAddr).asFunction<F4Dart>();
+    final p = get();
+    if (p == nullptr) return '';
+    try {
+      return p.toDartString();
+    } finally {
+      if (freeAddr != 0) {
+        Pointer<NativeFunction<F5>>.fromAddress(freeAddr)
+            .asFunction<F5Dart>()(p);
+      }
+    }
+  } catch (_) {
+    return '';
+  }
+}
 
 /// The Linux bundle keeps the core library at lib/librustdesk.so next to the
 /// executable. Prefer that copy, mirroring flutter/linux/main.cc: the plain
@@ -68,6 +90,10 @@ class PlatformFFI {
   RustdeskImpl get ffiBind => _ffiBind;
   F3? _session_get_rgba;
   F4? _get_local_config_info;
+  // Z远程协助: 底层函数指针(跨 isolate 需用地址重建)，用于后台 isolate 采集本机配置，
+  // 避免同步 FFI 在 UI 线程阻塞。
+  Pointer<NativeFunction<F4>>? _get_local_config_info_ptr;
+  Pointer<NativeFunction<F5>>? _free_local_config_info_ptr;
   F5? _free_local_config_info;
 
   static get localeName => Platform.localeName;
@@ -127,6 +153,19 @@ class PlatformFFI {
     }
   }
 
+  /// Z远程协助: 后台 isolate 采集本机配置——把底层函数指针地址传入 isolate 重建调用，
+  /// 避免同步 FFI(含注册表/服务/磁盘/网速/公网IP 采集)在 UI 线程阻塞导致「正在获取…无结果」。
+  Future<String> getLocalConfigInfoAsync() async {
+    if (_get_local_config_info_ptr == null) return '';
+    final getAddr = _get_local_config_info_ptr!.address;
+    final freeAddr = _free_local_config_info_ptr?.address ?? 0;
+    try {
+      return await Isolate.run(() => _callConfigInfoByAddress(getAddr, freeAddr));
+    } catch (_) {
+      return '';
+    }
+  }
+
   Uint8List? getRgba(SessionID sessionId, int display, int bufSize) {
     if (_session_get_rgba == null) return null;
     final sessionIdStr = sessionId.toString();
@@ -178,10 +217,17 @@ class PlatformFFI {
             dylib.lookupFunction<F4Dart, F4>("get_local_config_info");
         _free_local_config_info =
             dylib.lookupFunction<F5Dart, F5>("free_local_config_info");
+        // Z远程协助: 同时保存底层指针，供后台 isolate 经地址重建调用(见 getLocalConfigInfoAsync)。
+        _get_local_config_info_ptr =
+            dylib.lookup<NativeFunction<F4>>("get_local_config_info");
+        _free_local_config_info_ptr =
+            dylib.lookup<NativeFunction<F5>>("free_local_config_info");
       } catch (_) {
         // 安卓/Web 未导出该符号，禁用「查看本机配置」。
         _get_local_config_info = null;
         _free_local_config_info = null;
+        _get_local_config_info_ptr = null;
+        _free_local_config_info_ptr = null;
       }
       try {
         // SYSTEM user failed

@@ -87,7 +87,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         ),
       Align(
         alignment: Alignment.center,
-        child: loadLogo(),
+        // Z远程协助: 隐藏「你的桌面」上方的大 logo 图标(保留顶部 slogan)。
+        child: SizedBox.shrink(),
       ),
       buildTip(context),
       if (!isOutgoingOnly) buildIDBoard(context),
@@ -423,10 +424,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   Future<void> _showLocalConfig() async {
     try {
-      // Z远程协助: 采集为同步 FFI(含网速采样/公网IP查询)，先给用户即时反馈，
-      // 避免点击后无任何视觉响应。
+      // Z远程协助: 后台 isolate 采集(win 采集含注册表/服务/磁盘/网速/公网IP，同步 FFI 会阻塞 UI)。
       showToast('正在获取本机配置...');
-      final json = platformFFI.getLocalConfigInfo();
+      final json = await platformFFI.getLocalConfigInfoAsync();
       if (json.isEmpty) {
         showToast('暂不支持');
         return;

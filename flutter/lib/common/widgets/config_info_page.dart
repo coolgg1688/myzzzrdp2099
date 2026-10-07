@@ -172,17 +172,6 @@ int _toInt(dynamic v) {
   return 0;
 }
 
-// Z远程协助: Excel 列式子项编号，0-based -> "a)" / "b)" ... "z)" / "aa)"。
-String _excel(int n) {
-  final sb = StringBuffer();
-  var x = n;
-  do {
-    sb.writeCharCode(65 + x % 26);
-    x = x ~/ 26 - 1;
-  } while (x >= 0);
-  return '${sb.toString()})';
-}
-
 // Z远程协助: 淡蓝色圆角行号标签（替代纯文字行号）。
 Widget _numBadge(int index) {
   return Container(
@@ -661,7 +650,8 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(
-                width: 100,
+                // Z远程协助: 标签列收窄到容纳约6个字，值列(Expanded)随之加宽。
+                width: 88,
                 child: Text(
                   e.label,
                   style: const TextStyle(
@@ -738,7 +728,7 @@ class _ListTabViewState extends State<_ListTabView> {
                 e.key < widget.columns.length ? widget.columns[e.key] : '';
             return '$col: ${e.value.isEmpty ? '未知' : e.value}';
           }).join('\n');
-    title = '${_excel(letterIndex)} $title';
+    title = title;
     return ListTile(
       dense: true,
       contentPadding:
