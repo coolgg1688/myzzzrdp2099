@@ -27,8 +27,8 @@ typedef F3Dart = Pointer<Uint8> Function(Pointer<Utf8>, Int32);
 typedef F4 = Pointer<Utf8> Function();
 typedef F4Dart = Pointer<Utf8> Function();
 // Z远程协助: 释放 get_local_config_info 的返回值(必须回 Rust 分配器，不能 malloc.free)。
-// 注意: native 签名用 dart:ffi 的 Void(大写)，Dart 侧回调签名必须用小写 void。
-typedef F5Dart = Void Function(Pointer<Utf8>);
+// 注意: native 签名用 dart:ffi 的 Void(大写，见 F5Native)；Dart 侧回调/绑定类型必须用小写 void(见 F5Dart)。
+typedef F5Dart = void Function(Pointer<Utf8>);
 typedef F5 = void Function(Pointer<Utf8>);
 // Z远程协助: free_local_config_info 的 native 签名必须用 Void(大写)作为返回类型，
 // 否则 NativeFunction<void Function(...)> 不是合法 NativeType，无法用于 Pointer 泛型。
