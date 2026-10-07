@@ -163,11 +163,18 @@ class PlatformFFI {
   /// 原本同步 FFI 会卡死 UI 导致「正在获取…无结果」)；web 平台 compute() 同步执行，
   /// 但 web 上符号缺失时 ptr 为 null 会直接返回空串，不会走到采集。
   Future<String> getLocalConfigInfoAsync() async {
-    if (_get_local_config_info_ptr == null) return '';
-    final getAddr = _get_local_config_info_ptr!.address;
-    final freeAddr = _free_local_config_info_ptr?.address ?? 0;
+    // Z远程协助: 主 isolate 同步调用(与远程「查看配置信息」同一已验证路径)。
+    // 不能用 compute 真 isolate 跑 collect_config_info——其内部含公网IP请求等耗时操作，
+    // 在 isolate 中易卡死导致前端 await 永不返回(表现为「查看本机配置」无结果)。
+    if (_get_local_config_info == null) return '';
     try {
-      return await compute(_callConfigInfoByAddress, <int>[getAddr, freeAddr]);
+      final p = _get_local_config_info!();
+      if (p == nullptr) return '';
+      try {
+        return p.toDartString();
+      } finally {
+        _free_local_config_info?.call(p);
+      }
     } catch (_) {
       return '';
     }
