@@ -27,8 +27,9 @@ typedef F3Dart = Pointer<Uint8> Function(Pointer<Utf8>, Int32);
 typedef F4 = Pointer<Utf8> Function();
 typedef F4Dart = Pointer<Utf8> Function();
 // Z远程协助: 释放 get_local_config_info 的返回值(必须回 Rust 分配器，不能 malloc.free)。
-typedef F5 = Void Function(Pointer<Utf8>);
+// 注意: native 签名用 dart:ffi 的 Void，Dart 侧回调签名必须用小写 void。
 typedef F5Dart = Void Function(Pointer<Utf8>);
+typedef F5 = void Function(Pointer<Utf8>);
 typedef HandleEvent = Future<void> Function(Map<String, dynamic> evt);
 
 /// The Linux bundle keeps the core library at lib/librustdesk.so next to the
