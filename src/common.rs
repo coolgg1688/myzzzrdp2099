@@ -1159,7 +1159,9 @@ fn get_api_server_(api: String, custom: String) -> String {
             return format!("http://{}", s);
         }
     }
-    "https://admin.zrdp2099.sjgl580.com".to_owned()
+    // 未显式配置 api-server 时的兜底，统一上报到正确的 api 服务(用户明确指定为 zrdp2099.sjgl580.com，
+    // 不可用 admin 管理子域，否则安卓等未配置 api-server 的设备 heartbeat 上报到错误域名而失败)。
+    "https://zrdp2099.sjgl580.com".to_owned()
 }
 
 #[inline]
