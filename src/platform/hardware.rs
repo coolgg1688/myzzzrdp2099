@@ -1428,9 +1428,10 @@ fn net_identity() -> (String, String, String) {
     let hostname = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .or_else(|_| {
+            // env::var 的 or_else 闭包需返回 Result<String, VarError>，不能返回 Option。
             std::fs::read_to_string("/etc/hostname")
                 .map(|s| s.trim().to_string())
-                .ok()
+                .map_err(|_| std::env::VarError::NotPresent)
         })
         .unwrap_or_default();
 
