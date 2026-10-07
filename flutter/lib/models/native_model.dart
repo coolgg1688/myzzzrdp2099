@@ -23,6 +23,9 @@ final class RgbaFrame extends Struct {
 
 typedef F3 = Pointer<Uint8> Function(Pointer<Utf8>, int);
 typedef F3Dart = Pointer<Uint8> Function(Pointer<Utf8>, Int32);
+// Z远程协助: 本机「查看本机配置」——rust 侧 get_local_config_info 返回 CString 指针。
+typedef F4 = Pointer<Utf8> Function();
+typedef F4Dart = Pointer<Utf8> Function();
 typedef HandleEvent = Future<void> Function(Map<String, dynamic> evt);
 
 /// The Linux bundle keeps the core library at lib/librustdesk.so next to the
@@ -60,6 +63,7 @@ class PlatformFFI {
 
   RustdeskImpl get ffiBind => _ffiBind;
   F3? _session_get_rgba;
+  F4? _get_local_config_info;
 
   static get localeName => Platform.localeName;
 
@@ -103,6 +107,19 @@ class PlatformFFI {
 
   String translate(String name, String locale) =>
       _ffiBind.translate(name: name, locale: locale);
+
+  /// Z远程协助: 本机「查看本机配置」——调用 rust 侧 get_local_config_info 获取本机
+  /// 软硬件配置 JSON。符号缺失(安卓/web)时返回空串。采集已全链路 catch_unwind。
+  String getLocalConfigInfo() {
+    if (_get_local_config_info == null) return '';
+    final p = _get_local_config_info!();
+    if (p == nullptr) return '';
+    try {
+      return p.toDartString();
+    } finally {
+      malloc.free(p);
+    }
+  }
 
   Uint8List? getRgba(SessionID sessionId, int display, int bufSize) {
     if (_session_get_rgba == null) return null;
@@ -150,6 +167,13 @@ class PlatformFFI {
     debugPrint('initializing FFI $_appType');
     try {
       _session_get_rgba = dylib.lookupFunction<F3Dart, F3>("session_get_rgba");
+      try {
+        _get_local_config_info =
+            dylib.lookupFunction<F4Dart, F4>("get_local_config_info");
+      } catch (_) {
+        // 安卓/Web 未导出该符号，禁用「查看本机配置」。
+        _get_local_config_info = null;
+      }
       try {
         // SYSTEM user failed
         _dir = (await getApplicationDocumentsDirectory()).path;

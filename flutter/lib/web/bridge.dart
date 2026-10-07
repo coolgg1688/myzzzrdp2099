@@ -126,6 +126,9 @@ class RustdeskImpl {
     return 0;
   }
 
+  // Z远程协助: web 端不采集本机硬件，返回空串(主界面按钮在 web 隐藏/无效)。
+  String getLocalConfigInfo({dynamic hint}) => '';
+
   String sessionAddExistedSync(
       {required String id,
       required UuidValue sessionId,

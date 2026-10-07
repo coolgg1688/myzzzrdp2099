@@ -73,6 +73,9 @@ class PlatformFFI {
   static get localeName => window.navigator.language;
   RustdeskImpl get ffiBind => _ffiBind;
 
+  // Z远程协助: web 端不采集本机硬件，返回空串(主界面按钮在 web 隐藏/无效)。
+  String getLocalConfigInfo() => '';
+
   static Future<String> getVersion() async {
     throw UnimplementedError();
   }

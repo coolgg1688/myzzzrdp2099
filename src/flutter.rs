@@ -1709,6 +1709,19 @@ pub extern "C" fn session_get_rgba(session_uuid_str: *const char, display: usize
     std::ptr::null()
 }
 
+/// Z远程协助: 本机「查看本机配置」入口。返回 collect_config_info() 的 C 字符串，
+/// 调用方(Dart)负责释放；采集内部已全链路 catch_unwind，永不 panic。
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn get_local_config_info() -> *mut std::os::raw::c_char {
+    use std::ffi::CString;
+    let s = crate::platform::hardware::collect_config_info();
+    match CString::new(s) {
+        Ok(c) => c.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 pub fn session_next_rgba(session_id: SessionID, display: usize) {
     if let Some(s) = sessions::get_session_by_session_id(&session_id) {
         return s.ui_handler.next_rgba(display);

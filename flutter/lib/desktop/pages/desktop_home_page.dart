@@ -92,6 +92,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       buildTip(context),
       if (!isOutgoingOnly) buildIDBoard(context),
       if (!isOutgoingOnly) buildPasswordBoard(context),
+      // Z远程协助: 一次性密码下方另起一行的「查看本机配置」链接(win/linux/mac)。
+      if (!isOutgoingOnly) _buildLocalConfigLink(context),
       FutureBuilder<Widget>(
         future: Future.value(
             Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
@@ -384,6 +386,57 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         ],
       ),
     );
+  }
+
+  // Z远程协助: 一次性密码下方「查看本机配置」链接。点击后调用本机采集(无需认证)，
+  // 打开 configInfo 子窗口并广播本机 JSON，复用与远程「查看配置信息」一致的展示链路。
+  Widget _buildLocalConfigLink(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 27, top: 5, bottom: 2),
+        child: GestureDetector(
+          onTap: () => _showLocalConfig(),
+          child: Tooltip(
+            message: '查看本机配置',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.memory, size: 16, color: MyTheme.accent),
+                const SizedBox(width: 5),
+                Text(
+                  '查看本机配置',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: MyTheme.accent,
+                    decoration: TextDecoration.underline,
+                    decorationColor: MyTheme.accent,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showLocalConfig() async {
+    try {
+      final json = platformFFI.getLocalConfigInfo();
+      if (json.isEmpty) {
+        showToast('暂不支持');
+        return;
+      }
+      final myId = gFFI.serverModel.serverId.text.trim();
+      await rustDeskWinManager.newConfigInfo(
+          myId.isEmpty ? '本机' : myId, waitForData: true);
+      await rustDeskWinManager.forwardToConfigInfoWindows(
+          {'type': 'zremote66-config-info', 'text': json});
+    } catch (e) {
+      debugPrint('查看本机配置失败: $e');
+      showToast('查看本机配置失败');
+    }
   }
 
   buildTip(BuildContext context) {

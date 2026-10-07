@@ -1374,6 +1374,18 @@ fn is_virtual_fs(fs: &str) -> bool {
     )
 }
 
+/// Z远程协助: 安卓真实物理存储挂载点白名单。sysinfo 在安卓把 /data 下每个应用
+/// 子目录(/data/data/*、/data/user/*、/data/misc/* 等 200+ 项)都列为独立挂载点；
+/// 这里只认内部存储与外部 SD 卡：/storage/*、/sdcard 以及根目录 /。其余伪挂载点
+/// 全部跳过，从而"硬盘数量=实际物理存储数"。
+#[cfg(target_os = "android")]
+fn is_real_storage(mount: &str) -> bool {
+    mount == "/"
+        || mount.starts_with("/storage/")
+        || mount == "/sdcard"
+        || mount.starts_with("/sdcard/")
+}
+
 fn sys_disks() -> Value {
     use sysinfo::Disks;
     let disks = Disks::new_with_refreshed_list();
@@ -1385,10 +1397,15 @@ fn sys_disks() -> Value {
         if is_virtual_fs(&fs) {
             continue;
         }
+        let mount: String = d.mount_point().to_string_lossy().into_owned();
+        // Z远程协助: 安卓再按挂载点路径过滤，只保留真实物理存储卷(见 is_real_storage)。
+        #[cfg(target_os = "android")]
+        if !is_real_storage(&mount) {
+            continue;
+        }
         let total = d.total_space() as f64;
         let avail = d.available_space() as f64;
         let used = (total - avail).max(0.0);
-        let mount: String = d.mount_point().to_string_lossy().into_owned();
         let dev: String = d.name().to_string_lossy().into_owned();
         total_b += total;
         free_b += avail;
@@ -1456,7 +1473,13 @@ fn format_up(secs: f64) -> String {
 /// synchronously inside a tokio worker; the 500ms cap keeps the blocking cost
 /// bounded.
 pub fn collect_config_info() -> String {
-    match serde_json::to_string(&collect()) {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    // Z远程协助: 顶层 catch_unwind 兜底——即使 collect() 内部某处出现未预期 panic，
+    // 也只会返回兜底 JSON，绝不拖垮整个被控端进程(修复"安卓获取 win 配置时 win 退出")。
+    let data = catch_unwind(AssertUnwindSafe(collect)).unwrap_or_else(|_| {
+        json!({"os": {}, "cpu": {}, "memory": {}, "disk": {}, "error": "采集失败"})
+    });
+    match serde_json::to_string(&data) {
         Ok(s) => s,
         Err(_) => String::new(),
     }
