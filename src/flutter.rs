@@ -1722,6 +1722,19 @@ pub extern "C" fn get_local_config_info() -> *mut std::os::raw::c_char {
     }
 }
 
+/// Z远程协助: 释放 get_local_config_info 返回的 CString(与分配端 CString::into_raw 配套，
+/// 必须由同一 Rust 分配器释放——Dart 侧不可用 C malloc free，否则堆损坏导致进程退出)。
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+#[no_mangle]
+pub extern "C" fn free_local_config_info(ptr: *mut std::os::raw::c_char) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        drop(std::ffi::CString::from_raw(ptr));
+    }
+}
+
 pub fn session_next_rgba(session_id: SessionID, display: usize) {
     if let Some(s) = sessions::get_session_by_session_id(&session_id) {
         return s.ui_handler.next_rgba(display);

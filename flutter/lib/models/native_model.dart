@@ -26,6 +26,9 @@ typedef F3Dart = Pointer<Uint8> Function(Pointer<Utf8>, Int32);
 // Z远程协助: 本机「查看本机配置」——rust 侧 get_local_config_info 返回 CString 指针。
 typedef F4 = Pointer<Utf8> Function();
 typedef F4Dart = Pointer<Utf8> Function();
+// Z远程协助: 释放 get_local_config_info 的返回值(必须回 Rust 分配器，不能 malloc.free)。
+typedef F5 = Void Function(Pointer<Utf8>);
+typedef F5Dart = Void Function(Pointer<Utf8>);
 typedef HandleEvent = Future<void> Function(Map<String, dynamic> evt);
 
 /// The Linux bundle keeps the core library at lib/librustdesk.so next to the
@@ -64,6 +67,7 @@ class PlatformFFI {
   RustdeskImpl get ffiBind => _ffiBind;
   F3? _session_get_rgba;
   F4? _get_local_config_info;
+  F5? _free_local_config_info;
 
   static get localeName => Platform.localeName;
 
@@ -117,7 +121,8 @@ class PlatformFFI {
     try {
       return p.toDartString();
     } finally {
-      malloc.free(p);
+      // Z远程协助: 必须由 Rust 分配器释放(配套 free_local_config_info)，不可用 malloc.free。
+      _free_local_config_info?.call(p);
     }
   }
 
@@ -170,9 +175,12 @@ class PlatformFFI {
       try {
         _get_local_config_info =
             dylib.lookupFunction<F4Dart, F4>("get_local_config_info");
+        _free_local_config_info =
+            dylib.lookupFunction<F5Dart, F5>("free_local_config_info");
       } catch (_) {
         // 安卓/Web 未导出该符号，禁用「查看本机配置」。
         _get_local_config_info = null;
+        _free_local_config_info = null;
       }
       try {
         // SYSTEM user failed
