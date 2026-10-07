@@ -222,8 +222,10 @@ class PlatformFFI {
       try {
         _get_local_config_info =
             dylib.lookupFunction<F4Dart, F4>("get_local_config_info");
-        _free_local_config_info =
-            dylib.lookupFunction<F5Dart, F5>("free_local_config_info");
+        // Z远程协助: 与官方 F4 模式一致——lookup 用 NativeType(F5Native, 大写Void)，asFunction 用 Dart 类型(F5Dart, 小写void)。
+        _free_local_config_info = dylib
+            .lookup<NativeFunction<F5Native>>("free_local_config_info")
+            .asFunction<F5Dart>();
         // Z远程协助: 同时保存底层指针，供后台 isolate 经地址重建调用(见 getLocalConfigInfoAsync)。
         _get_local_config_info_ptr =
             dylib.lookup<NativeFunction<F4>>("get_local_config_info");
