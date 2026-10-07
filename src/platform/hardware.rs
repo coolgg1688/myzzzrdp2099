@@ -1448,7 +1448,9 @@ fn net_identity() -> (String, String, String) {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         use std::time::Duration;
         let c = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(3))
+            // Z远程协助: 公网 IP 查询短超时(800ms)——本采集是同步 FFI，长时间阻塞会冻结
+            // 主控端 UI(点击「查看本机配置」后无反应)。超时则留空，不拖慢采集。
+            .timeout(Duration::from_millis(800))
             .build();
         let Ok(c) = c else { return String::new() };
         let Ok(r) = c.get("https://api.ipify.org").send() else {

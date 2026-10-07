@@ -423,6 +423,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   Future<void> _showLocalConfig() async {
     try {
+      // Z远程协助: 采集为同步 FFI(含网速采样/公网IP查询)，先给用户即时反馈，
+      // 避免点击后无任何视觉响应。
+      showToast('正在获取本机配置...');
       final json = platformFFI.getLocalConfigInfo();
       if (json.isEmpty) {
         showToast('暂不支持');
