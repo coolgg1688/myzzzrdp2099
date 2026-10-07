@@ -150,6 +150,12 @@ String _fmtGb(dynamic v) {
   return '0.0';
 }
 
+// Z远程协助: 内存自适应单位——输入为 MB，≥1024 自动转 GB，否则保留 MB。
+String _fmtMem(double mb) {
+  if (mb >= 1024) return '${(mb / 1024).toStringAsFixed(1)}GB';
+  return '${mb.toStringAsFixed(1)}MB';
+}
+
 // Z远程协助: 把任意取值安全转成 double（用于容量/速率等数值判定）。
 double _toGb(dynamic v) {
   if (v is num) return v.toDouble();
@@ -510,7 +516,7 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
     }
 
     // group 4: 内存（总/剩余必显示，已用>0 才显示，brand 非空追加品牌）
-    // 单位统一为 MB（后端输出 total_mb/available_mb/used_mb）；兼容旧被控端 total_gb 显示 GB。
+    // 单位：后端输出 total_mb/available_mb/used_mb（MB），前端 ≥1024 自动转 GB；兼容旧格式 total_gb。
     {
       final totalMb = mem['total_mb'] != null ? _toGb(mem['total_mb']) : null;
       final usedMb = mem['used_mb'] != null ? _toGb(mem['used_mb']) : null;
@@ -518,9 +524,9 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
       final brand = mem['brand']?.toString() ?? '';
       if (totalMb != null || usedMb != null || availMb != null) {
         final parts = <String>[];
-        if (totalMb != null && totalMb > 0) parts.add('总:${_fmtGb(totalMb)}MB');
-        if (availMb != null && availMb > 0) parts.add('剩余:${_fmtGb(availMb)}MB');
-        if (usedMb != null && usedMb > 0) parts.add('已用:${_fmtGb(usedMb)}MB');
+        if (totalMb != null && totalMb > 0) parts.add('总:${_fmtMem(totalMb)}');
+        if (availMb != null && availMb > 0) parts.add('剩余:${_fmtMem(availMb)}');
+        if (usedMb != null && usedMb > 0) parts.add('已用:${_fmtMem(usedMb)}');
         var value = parts.join(' ');
         if (brand.isNotEmpty) value += ' (品牌:$brand)';
         rows.add(_HwRow(label: '内存', value: value, group: 4));
@@ -541,7 +547,7 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
       }
     }
 
-    // group 5: 硬盘（每块物理磁盘一行 + 其分区子行；兼容旧格式平铺 partitions）
+    // group 5: 硬盘（每块物理磁盘一行，编号 1. 2. ；取消分区子行）
     {
       final disks = disk['disks'];
       if (disks is List && disks.isNotEmpty) {
@@ -563,34 +569,12 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
           if (dFree > 0) segs.add('剩余:${_fmtGb(dFree)}GB');
           if (segs.isEmpty) continue;
           var value = segs.join(' ');
-          if (multiDisk) value = '${_excel(dIdx)} $value';
+          if (multiDisk) value = '${dIdx + 1}.  $value';
           rows.add(_HwRow(label: '硬盘', value: value, group: 5));
           dIdx++;
-          // 该盘的分区子行
-          final partsList = d['partitions'];
-          if (partsList is List && partsList.isNotEmpty) {
-            final multiPart = partsList.length > 1;
-            var pIdx = 0;
-            for (final p in partsList) {
-              if (p is! Map) continue;
-              final pName = p['name']?.toString() ?? '';
-              final pLabel = p['label']?.toString() ?? '';
-              final pTotal = _toGb(p['total_gb']);
-              final pFree = _toGb(p['free_gb']);
-              if (pName.isEmpty && pTotal <= 0 && pFree <= 0) continue;
-              var value = pLabel.isNotEmpty ? '$pName ($pLabel)' : pName;
-              final segs2 = <String>[];
-              if (pTotal > 0) segs2.add('总:${_fmtGb(pTotal)}GB');
-              if (pFree > 0) segs2.add('剩余:${_fmtGb(pFree)}GB');
-              if (segs2.isNotEmpty) value += ' ${segs2.join(' ')}';
-              if (multiPart) value = '${_excel(pIdx)} $value';
-              rows.add(_HwRow(label: '分区', value: value.trim(), group: 5));
-              pIdx++;
-            }
-          }
         }
       } else {
-        // 旧格式回退：顶层汇总行 + 平铺 partitions。
+        // 旧格式回退：仅顶层汇总行（不再平铺分区）。
         final total = _toGb(disk['total_gb']);
         final used = _toGb(disk['used_gb']);
         final free = _toGb(disk['free_gb']);
@@ -600,27 +584,6 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
         if (free > 0) summary.add('剩余:${_fmtGb(free)}GB');
         if (summary.isNotEmpty) {
           rows.add(_HwRow(label: '硬盘', value: summary.join(' '), group: 5));
-        }
-        final partitions = disk['partitions'];
-        if (partitions is List && partitions.isNotEmpty) {
-          final multiPart = partitions.length > 1;
-          var pIdx = 0;
-          for (final p in partitions) {
-            if (p is! Map) continue;
-            final pName = p['name']?.toString() ?? '';
-            final pLabel = p['label']?.toString() ?? '';
-            final pTotal = _toGb(p['total_gb']);
-            final pFree = _toGb(p['free_gb']);
-            if (pName.isEmpty && pTotal <= 0 && pFree <= 0) continue;
-            var value = pLabel.isNotEmpty ? '$pName ($pLabel)' : pName;
-            final segs2 = <String>[];
-            if (pTotal > 0) segs2.add('总:${_fmtGb(pTotal)}GB');
-            if (pFree > 0) segs2.add('剩余:${_fmtGb(pFree)}GB');
-            if (segs2.isNotEmpty) value += ' ${segs2.join(' ')}';
-            if (multiPart) value = '${_excel(pIdx)} $value';
-            rows.add(_HwRow(label: '分区', value: value.trim(), group: 5));
-            pIdx++;
-          }
         }
       }
     }
@@ -662,7 +625,7 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
           if (rx > 0) speed.add('下载:${rx.toStringAsFixed(0)} KB/s');
           if (speed.isNotEmpty) value += ' — ${speed.join(' ')}';
           if (value.isEmpty) continue;
-          if (multi) value = '${_excel(nIdx)} $value';
+          if (multi) value = '${nIdx + 1}.  $value';
           rows.add(_HwRow(label: '网卡', value: value, group: 8));
           nIdx++;
         }

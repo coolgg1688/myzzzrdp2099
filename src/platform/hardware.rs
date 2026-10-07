@@ -184,9 +184,10 @@ mod win {
     pub fn memory() -> Value {
         let mut sys = System::new_all();
         sys.refresh_memory();
-        // sysinfo returns KiB; convert to bytes, then to MB.
-        let total_b = sys.total_memory() as f64 * 1024.0;
-        let avail_b = sys.available_memory() as f64 * 1024.0;
+        // Z远程协助: sysinfo 0.33 的 total_memory()/available_memory() 返回字节(bytes)，
+        // 直接除以 1048576 得 MB。此前误当 KiB×1024 放大，导致内存漏除 /1024 显示成 KB 值。
+        let total_b = sys.total_memory() as f64;
+        let avail_b = sys.available_memory() as f64;
         let used_b = (total_b - avail_b).max(0.0);
         let brand = smbios_memory_brand();
         json!({
@@ -1295,9 +1296,10 @@ fn sys_memory() -> Value {
     use sysinfo::System;
     let mut sys = System::new_all();
     sys.refresh_memory();
-    // sysinfo 内存单位为 KiB，先转字节再转 MB。
-    let total_b = sys.total_memory() as f64 * 1024.0;
-    let avail_b = sys.available_memory() as f64 * 1024.0;
+    // Z远程协助: sysinfo 0.33 total_memory()/available_memory() 返回字节(bytes)，
+    // 直接 /1048576 得 MB，此前误当 KiB×1024 放大导致内存漏除 /1024。
+    let total_b = sys.total_memory() as f64;
+    let avail_b = sys.available_memory() as f64;
     json!({
         "total_mb": r1(total_b / 1048576.0),
         "available_mb": r1(avail_b / 1048576.0),
