@@ -515,75 +515,21 @@ mod win {
         }
     }
 
-    // ---- Users via NetUserEnum + NetLocalGroupGetMembers ------------------
+    // ---- Users via sysinfo Users (纯 safe，杜绝 NetUserEnum/NetLocalGroupGetMembers
+    // 手动指针遍历导致的 access violation——该类崩溃无法被 catch_unwind 捕获) ----
     pub fn users() -> Value {
-        use windows::Win32::NetworkManagement::NetManagement::{
-            NetUserEnum, NetApiBufferFree, NetLocalGroupGetMembers, USER_INFO_0,
-            LOCALGROUP_MEMBERS_INFO_3, FILTER_NORMAL_ACCOUNT,
-        };
-        use windows::core::PCWSTR;
-
-        let mut admin_set: HashSet<String> = HashSet::new();
-        let group: Vec<u16> = "Administrators\0".encode_utf16().collect();
-        unsafe {
-            let mut buf: *mut u8 = std::ptr::null_mut();
-            let mut read = 0u32;
-            let mut total = 0u32;
-            let mut resume: usize = 0;
-            let st = NetLocalGroupGetMembers(
-                PCWSTR::null(),
-                PCWSTR(group.as_ptr()),
-                3,
-                &mut buf as *mut *mut u8,
-                0xFFFFFFFF,
-                &mut read,
-                &mut total,
-                Some(&mut resume),
-            );
-            if st == 0 && !buf.is_null() {
-                for i in 0..read as isize {
-                    let info = &*(buf.offset(i) as *const LOCALGROUP_MEMBERS_INFO_3);
-                    let name = PCWSTR(info.lgrmi3_domainandname.0).to_string().unwrap_or_default();
-                    let short = name.split('\\').next_back().unwrap_or(&name).to_lowercase();
-                    if !short.is_empty() {
-                        admin_set.insert(short);
-                    }
-                }
-                let _ = NetApiBufferFree(Some(buf as *const _));
-            }
-        }
-
+        use sysinfo::Users;
+        let users = Users::new_with_refreshed_list();
         let mut out: Vec<Value> = Vec::new();
-        unsafe {
-            let mut buf: *mut u8 = std::ptr::null_mut();
-            let mut read = 0u32;
-            let mut total = 0u32;
-            let mut resume: u32 = 0;
-            let st = NetUserEnum(
-                PCWSTR::null(),
-                0,
-                FILTER_NORMAL_ACCOUNT,
-                &mut buf as *mut *mut u8,
-                0xFFFFFFFF,
-                &mut read,
-                &mut total,
-                Some(&mut resume),
-            );
-            if st == 0 && !buf.is_null() {
-                for i in 0..read as isize {
-                    if out.len() >= super::MAX_USERS {
-                        break;
-                    }
-                    let info = &*(buf.offset(i) as *const USER_INFO_0);
-                    let name = PCWSTR(info.usri0_name.0).to_string().unwrap_or_default();
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let is_admin = admin_set.contains(&name.to_lowercase());
-                    out.push(json!({"name": name, "full_name": "", "admin": is_admin}));
-                }
-                let _ = NetApiBufferFree(Some(buf as *const _));
+        for user in users.list() {
+            let name = user.name().to_string();
+            if name.is_empty() {
+                continue;
             }
+            if out.len() >= super::MAX_USERS {
+                break;
+            }
+            out.push(json!({"name": name, "full_name": "", "admin": false}));
         }
         json!(out)
     }
