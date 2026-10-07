@@ -87,6 +87,8 @@ class _DesktopConfigInfoScreenState extends State<DesktopConfigInfoScreen> {
         isSharedPassword: widget.params['isSharedPassword'],
         forceRelay: widget.params['forceRelay'],
         waitForData: waitForData,
+        // Z远程协助: 透传原始窗口参数，本机「查看本机配置」据此读取 local/text 直达数据。
+        params: widget.params,
       ),
     );
   }

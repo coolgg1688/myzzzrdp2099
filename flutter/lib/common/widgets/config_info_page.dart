@@ -223,6 +223,9 @@ class ConfigInfoPage extends StatefulWidget {
   // Z远程协助: true 表示主控端已持有该 peer 的认证会话（密码已通过），
   // 本页不发起新的 LoginRequest，仅等待主窗口转发被控端回传的配置数据。
   final bool waitForData;
+  // Z远程协助: 子窗口原始参数 map。本机「查看本机配置」用它读取 local/text
+  // 直达本机 JSON，随窗口参数立即渲染，避免广播竞态导致的白屏/一直转圈。
+  final Map<String, dynamic>? params;
 
   const ConfigInfoPage({
     Key? key,
@@ -231,6 +234,7 @@ class ConfigInfoPage extends StatefulWidget {
     this.isSharedPassword,
     this.forceRelay,
     this.waitForData = false,
+    this.params,
   }) : super(key: key);
 
   @override
@@ -242,7 +246,7 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
   // 标题栏 + 关闭按钮；移动端/其它情况保留默认 AppBar。
   bool get _useCustomTitleBar => isDesktop && !isMacOS;
   // Z远程协助: 本机「查看本机配置」标题用「本机配置」，远程用「被控端配置信息」。
-  bool get _isLocalConfig => widget.params['local'] == true;
+  bool get _isLocalConfig => widget.params?['local'] == true;
   String get _windowTitle => _isLocalConfig ? '本机配置' : '被控端配置信息';
 
   @override
@@ -251,7 +255,7 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
     ConfigInfoController.instance.reset();
     // Z远程协助: 本机「查看本机配置」——数据已随窗口参数直达，直接渲染，不发起连接，
     // 彻底规避子窗口 MessageHandler 未就绪时广播丢失导致的白屏/一直转圈。
-    final localText = widget.params['text']?.toString();
+    final localText = widget.params?['text']?.toString();
     if (localText != null && localText.isNotEmpty) {
       ConfigInfoController.instance.update(localText);
     } else if (!widget.waitForData) {
