@@ -76,6 +76,9 @@ class PlatformFFI {
   // Z远程协助: web 端不采集本机硬件，返回空串(主界面按钮在 web 隐藏/无效)。
   String getLocalConfigInfo() => '';
 
+  // Z远程协助: web 端不支持 FFI 机器信息采集，同步版 async 接口，保证与 desktop 兼容。
+  Future<String> getLocalConfigInfoAsync() async => '';
+
   static Future<String> getVersion() async {
     throw UnimplementedError();
   }
