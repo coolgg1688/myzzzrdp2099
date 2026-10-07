@@ -27,9 +27,12 @@ typedef F3Dart = Pointer<Uint8> Function(Pointer<Utf8>, Int32);
 typedef F4 = Pointer<Utf8> Function();
 typedef F4Dart = Pointer<Utf8> Function();
 // Z远程协助: 释放 get_local_config_info 的返回值(必须回 Rust 分配器，不能 malloc.free)。
-// 注意: native 签名用 dart:ffi 的 Void，Dart 侧回调签名必须用小写 void。
+// 注意: native 签名用 dart:ffi 的 Void(大写)，Dart 侧回调签名必须用小写 void。
 typedef F5Dart = Void Function(Pointer<Utf8>);
 typedef F5 = void Function(Pointer<Utf8>);
+// Z远程协助: free_local_config_info 的 native 签名必须用 Void(大写)作为返回类型，
+// 否则 NativeFunction<void Function(...)> 不是合法 NativeType，无法用于 Pointer 泛型。
+typedef F5Native = Void Function(Pointer<Utf8>);
 typedef HandleEvent = Future<void> Function(Map<String, dynamic> evt);
 
 // Z远程协助: 在后台 isolate 内经地址重建 get_local_config_info / free_local_config_info 指针并调用。
@@ -47,7 +50,7 @@ String _callConfigInfoByAddress(List<int> args) {
       return p.toDartString();
     } finally {
       if (freeAddr != 0) {
-        Pointer<NativeFunction<F5>>.fromAddress(freeAddr)
+        Pointer<NativeFunction<F5Native>>.fromAddress(freeAddr)
             .asFunction<F5Dart>()(p);
       }
     }
@@ -95,7 +98,7 @@ class PlatformFFI {
   // Z远程协助: 底层函数指针(跨 isolate 需用地址重建)，用于后台 isolate 采集本机配置，
   // 避免同步 FFI 在 UI 线程阻塞。
   Pointer<NativeFunction<F4>>? _get_local_config_info_ptr;
-  Pointer<NativeFunction<F5>>? _free_local_config_info_ptr;
+  Pointer<NativeFunction<F5Native>>? _free_local_config_info_ptr;
   F5? _free_local_config_info;
 
   static get localeName => Platform.localeName;
@@ -225,7 +228,7 @@ class PlatformFFI {
         _get_local_config_info_ptr =
             dylib.lookup<NativeFunction<F4>>("get_local_config_info");
         _free_local_config_info_ptr =
-            dylib.lookup<NativeFunction<F5>>("free_local_config_info");
+            dylib.lookup<NativeFunction<F5Native>>("free_local_config_info");
       } catch (_) {
         // 安卓/Web 未导出该符号，禁用「查看本机配置」。
         _get_local_config_info = null;
