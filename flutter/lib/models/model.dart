@@ -930,7 +930,13 @@ class FfiModel with ChangeNotifier {
     // on the page instead of popping a blocking dialog that would hang the window.
     if (desktopType == DesktopType.configInfo) {
       dialogManager.dismissAll();
-      ConfigInfoController.instance.onConnectionError(title, text);
+      // Z远程协助: 密码错误(re-input-password)在配置信息窗口里保持密码输入界面，
+      // 由页面弹出密码框让用户重输后再连；其余连接级错误在页面内展示原因。
+      if (type == 're-input-password') {
+        ConfigInfoController.instance.onPasswordError();
+      } else {
+        ConfigInfoController.instance.onConnectionError(title, text);
+      }
       return;
     }
 

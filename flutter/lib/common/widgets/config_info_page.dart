@@ -23,6 +23,10 @@ class ConfigInfoController extends ChangeNotifier {
   bool loading = true;
   String? error;
 
+  // Z远程协助: 密码错误(re-input-password)标志。为 true 时页面应弹出密码重输框，
+  // 用户输入新密码后重连；而不是只在页面内显示"密码错误"而无法重试。
+  bool passwordError = false;
+
   // Z远程协助: 软件卸载 / 服务启停 / refresh 操作的状态与结果回传。
   bool opPending = false;
   String? opResultMessage;
@@ -76,6 +80,21 @@ class ConfigInfoController extends ChangeNotifier {
             ? ti
             : '连接失败，请确认被控端在线且密码正确');
     notifyListeners();
+  }
+
+  // Z远程协助: 密码错误。置 passwordError 标志，通知页面弹出密码重输界面。
+  void onPasswordError() {
+    loading = false;
+    passwordError = true;
+    notifyListeners();
+  }
+
+  // Z远程协助: 页面已弹出密码重输框后清除标志，避免同一错误重复触发。
+  void clearPasswordError() {
+    if (passwordError) {
+      passwordError = false;
+      notifyListeners();
+    }
   }
 
   void _resetOpState() {
@@ -237,11 +256,14 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
   // Z远程协助: 本机「查看本机配置」标题用「本机配置」，远程用「被控端配置信息」。
   bool get _isLocalConfig => widget.params?['local'] == true;
   String get _windowTitle => _isLocalConfig ? '本机配置' : '被控端配置信息';
+  // Z远程协助: 防抖——避免同一密码错误在弹框关闭/重建时重复触发重输框。
+  bool _pwDialogShown = false;
 
   @override
   void initState() {
     super.initState();
     ConfigInfoController.instance.reset();
+    ConfigInfoController.instance.addListener(_onConfigControllerChanged);
     // Z远程协助: 本机「查看本机配置」——数据已随窗口参数直达，直接渲染，不发起连接，
     // 彻底规避子窗口 MessageHandler 未就绪时广播丢失导致的白屏/一直转圈。
     final localText = widget.params?['text']?.toString();
@@ -264,12 +286,91 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
 
   @override
   void dispose() {
-    super.dispose();
+    ConfigInfoController.instance.removeListener(_onConfigControllerChanged);
     // Z远程协助: 非复用模式下本页自己发起了会话，释放之；复用模式下会话属于主窗口
     // isolate，本页只读复用，不能 close。
     if (!widget.waitForData) {
       gFFI.close();
     }
+    super.dispose();
+  }
+
+  // Z远程协助: 密码错误标志置位时，弹出密码重输框保持输入界面，可再次输入别的密码重连。
+  void _onConfigControllerChanged() {
+    final c = ConfigInfoController.instance;
+    if (!c.passwordError || _pwDialogShown || !mounted) return;
+    _pwDialogShown = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      c.clearPasswordError();
+      final pw = await _promptRetryPassword();
+      _pwDialogShown = false;
+      if (pw != null && pw.isNotEmpty) {
+        await _retryWithPassword(pw);
+      }
+    });
+  }
+
+  // Z远程协助: 密码重输框。不预填；提示上次密码错误，可再次输入别的密码。
+  Future<String?> _promptRetryPassword() async {
+    final controller = TextEditingController();
+    try {
+      if (!mounted) return null;
+      return await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('密码错误'),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('密码不正确，请重新输入被控端密码：'),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: controller,
+                  obscureText: true,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: '密码',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, controller.text),
+              child: const Text('重新连接'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  // Z远程协助: 用新密码重新发起配置信息连接。先释放旧会话再 start。
+  Future<void> _retryWithPassword(String pw) async {
+    if (!mounted) return;
+    try {
+      gFFI.close();
+    } catch (_) {}
+    ConfigInfoController.instance.reset();
+    gFFI.ffiModel.updateEventListener(gFFI.sessionId, widget.id);
+    gFFI.start(
+      widget.id,
+      isConfigInfo: true,
+      password: pw,
+      isSharedPassword: widget.isSharedPassword,
+      forceRelay: widget.forceRelay,
+    );
   }
 
   // Z远程协助: 关闭按钮逻辑健壮化——任一步失败都不阻断后续步骤，保证窗口最终能关掉；
