@@ -218,7 +218,16 @@ class _HwRow {
   final String label;
   final String value;
   final int group;
-  const _HwRow({required this.label, required this.value, required this.group});
+  // Z远程协助: 值列尾部的可点击操作链接(如"重启")。
+  final String actionLabel;
+  final VoidCallback? onAction;
+  const _HwRow({
+    required this.label,
+    required this.value,
+    required this.group,
+    this.actionLabel = '',
+    this.onAction,
+  });
 }
 
 /// Full-screen (mobile) / embedded (desktop) tabbed view of the peer's
@@ -374,6 +383,35 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
       isSharedPassword: widget.isSharedPassword,
       forceRelay: widget.forceRelay,
     );
+  }
+
+  // Z远程协助: 运行时间行「重启」链接——二次确认后向受控端发送 RestartRemoteDevice。
+  // 被控端按自身平台执行重启(win force_reboot / linux reboot / mac reboot)。
+  Future<void> _confirmReboot() async {
+    if (!mounted || _isLocalConfig) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认重启'),
+        content: const Text('是否确认重启受控端？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      bind.sessionRestartRemoteDevice(sessionId: gFFI.sessionId);
+    } catch (e) {
+      debugPrint('send restart remote device failed: $e');
+    }
   }
 
   // Z远程协助: 关闭按钮逻辑健壮化——任一步失败都不阻断后续步骤，保证窗口最终能关掉；
@@ -590,7 +628,15 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
         }
       }
       if (parts.isNotEmpty) {
-        rows.add(_HwRow(label: '运行时间', value: parts.join(''), group: 0));
+        rows.add(_HwRow(
+          label: '运行时间',
+          value: parts.join(''),
+          group: 0,
+          // Z远程协助: 本机「查看本机配置」不显示重启链接；远程受控端显示可点击
+          // 「重启」，二次确认后向受控端发送 RestartRemoteDevice。
+          actionLabel: _isLocalConfig ? '' : '重启',
+          onAction: _isLocalConfig ? null : _confirmReboot,
+        ));
       }
     }
     // IP地址: 本地IP / 互联网IP(操作系统下方)
@@ -798,7 +844,29 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
                   ),
                 ),
               ),
-              Expanded(child: Text(e.value)),
+              Expanded(
+                child: Row(
+                  children: [
+                    Flexible(child: Text(e.value)),
+                    // Z远程协助: 运行时间行尾可点击操作链接(重启)，前留 2 空格。
+                    if (e.actionLabel.isNotEmpty && e.onAction != null)
+                      InkWell(
+                        onTap: e.onAction,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Text(
+                            '  ${e.actionLabel}',
+                            style: const TextStyle(
+                              color: Color(0xFF1565C0),
+                              decoration: TextDecoration.underline,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ],
           ),
         );

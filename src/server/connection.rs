@@ -3951,7 +3951,9 @@ impl Connection {
                     }
                     Some(misc::Union::RestartRemoteDevice(_)) => {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                        if self.restart {
+                        // Z远程协助: config_info(查看配置信息)会话已通过固定密码验证，
+                        // 视同已授权重启；普通会话仍需 self.restart 权限开关。
+                        if self.restart || self.config_info {
                             // force_reboot, not work on linux vm and macos 14
                             #[cfg(any(target_os = "linux", target_os = "windows"))]
                             match system_shutdown::force_reboot() {
