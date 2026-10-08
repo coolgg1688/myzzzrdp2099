@@ -1141,6 +1141,11 @@ pub fn get_api_server(api: String, custom: String) -> String {
 }
 
 fn get_api_server_(api: String, custom: String) -> String {
+    // Portable sqlite cfg0 api_server takes the highest priority.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(api) = config::cfg0_field(|o| &o.api_server) {
+        return api;
+    }
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
         if !lic.api.is_empty() {
@@ -1174,6 +1179,13 @@ pub fn is_public(url: &str) -> bool {
         return false;
     };
     let host = host.strip_suffix('.').unwrap_or(host);
+    // Portable sqlite cfg0 domain is also treated as trusted/public.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(d) = config::cfg0_field(|o| &o.domain) {
+        if host == d || host.ends_with(&format!(".{d}")) {
+            return true;
+        }
+    }
     host == "zrdp2099.sjgl580.com" || host.ends_with(".zrdp2099.sjgl580.com")
 }
 
