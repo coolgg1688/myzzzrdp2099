@@ -984,6 +984,49 @@ impl Config {
         }
     }
 
+    /// Publish license info to CONFIG2.options for the UI:
+    ///   license_reg_to  = cfg0 `reg_to` (empty when cfg0 missing/undecryptable)
+    ///   license_sv_date = cfg0 `sv_date`, else build date + 30 days
+    /// `build_date` must be `"YYYY-MM-DD..."`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn apply_license_info(build_date: &str) {
+        let default_sv = {
+            let bd = match build_date.get(..10) {
+                Some(b) => b,
+                None => return,
+            };
+            let d = match chrono::NaiveDate::parse_from_str(bd, "%Y-%m-%d") {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            match d.checked_add_signed(chrono::Duration::days(30)) {
+                Some(d) => d.format("%Y-%m-%d").to_string(),
+                None => return,
+            }
+        };
+        let (reg_to, sv) = {
+            let o = CFG0_OVERRIDES.read().unwrap();
+            match o.as_ref() {
+                Some(o) => (
+                    o.reg_to.clone().unwrap_or_default(),
+                    o.sv_date
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.chars().take(10).collect::<String>())
+                        .unwrap_or_else(|| default_sv.clone()),
+                ),
+                None => (String::new(), default_sv),
+            }
+        };
+        let mut cfg2 = CONFIG2.write().unwrap();
+        cfg2
+            .options
+            .insert("license_reg_to".to_owned(), reg_to);
+        cfg2
+            .options
+            .insert("license_sv_date".to_owned(), sv);
+    }
+
     /// Read a non-empty field from cfg0 overrides (highest-priority source).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn cfg0_field(f: fn(&crate::db_cfg::CfgOverrides) -> &Option<String>) -> Option<String> {
