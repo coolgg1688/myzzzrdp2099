@@ -73,8 +73,11 @@ fn aes_decrypt(b64: &str) -> anyhow::Result<Vec<u8>> {
     Ok(pt)
 }
 
-/// `<exe_dir>/app_data/zrdp.db` for the portable build.
-fn db_path() -> PathBuf {
+use crate::config::Config;
+use std::fs;
+
+/// `<exe_dir>/app_data/zrdp.db` — the portable DB beside the executable.
+fn portable_db_path() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             return dir.join(APP_DATA_DIR).join(DB_FILE_NAME);
@@ -83,10 +86,60 @@ fn db_path() -> PathBuf {
     PathBuf::new()
 }
 
+/// Installed build's data dir: `%APPDATA%/<app>/app_data/zrdp.db` (via the
+/// standard RustDesk config dir). Keeps installed + portable consistent.
+fn install_db_path() -> Option<PathBuf> {
+    let p = Config::path(format!("{}/{}", APP_DATA_DIR, DB_FILE_NAME));
+    if p.as_os_str().is_empty() {
+        None
+    } else {
+        Some(p)
+    }
+}
+
+/// Resolve the DB actually used: prefer the portable one beside the exe, else
+/// the installed data dir.
+fn db_path() -> PathBuf {
+    let portable = portable_db_path();
+    if portable.as_os_str().is_empty() {
+        return portable;
+    }
+    if portable.exists() {
+        return portable;
+    }
+    install_db_path().unwrap_or(portable)
+}
+
+/// If a portable DB sits beside the exe, copy it into the installed data dir so
+/// the installed build reads identical cfg0 / audit data. Best-effort, silent.
+pub fn sync_db_to_install_dir() {
+    let portable = portable_db_path();
+    if portable.as_os_str().is_empty() || !portable.exists() {
+        return;
+    }
+    let Some(install) = install_db_path() else { return };
+    if install == portable {
+        return;
+    }
+    if let Some(parent) = install.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let same = match (fs::read(&install), fs::read(&portable)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if !same {
+        let _ = fs::copy(&portable, &install);
+    }
+}
+
 fn open_conn() -> Option<Connection> {
     let path = db_path();
     if path.as_os_str().is_empty() {
         return None;
+    }
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
     }
     let conn = Connection::open(&path).ok()?;
     let _ = conn.execute_batch(
