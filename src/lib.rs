@@ -25,6 +25,8 @@ pub mod bytes_codec;
 pub use anyhow::{self, bail};
 pub use futures_util;
 pub mod config;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod db_cfg;
 pub mod mem;
 pub use lazy_static;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

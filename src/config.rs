@@ -81,6 +81,9 @@ lazy_static::lazy_static! {
     pub static ref OVERWRITE_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref HARD_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref BUILTIN_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
+    // portable sqlite override cache (cfg0); None when no db / unreadable / decrypt fail
+    #[cfg(not(target_arch = "wasm32"))]
+    pub static ref CFG0_OVERRIDES: RwLock<Option<crate::db_cfg::CfgOverrides>> = Default::default();
 }
 
 #[cfg(target_os = "android")]
@@ -907,7 +910,54 @@ impl Config {
         }
     }
 
+    /// Load `cfg0` from the portable sqlite (`<exe>/app_data/zrdp.db`) and apply
+    /// overrides. No-op on wasm; silently keeps original behaviour when the db is
+    /// missing, unreadable, or decryption fails.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn init_db_cfg() {
+        if let Some(o) = crate::db_cfg::load_cfg0() {
+            if let Some(name) = o.app_name.as_deref().filter(|s| !s.is_empty()) {
+                *APP_NAME.write().unwrap() = name.to_owned();
+            }
+            // relay / api / public-key overrides land in CONFIG2.options so they
+            // win over defaults but stay overridable at runtime.
+            let mut cfg2 = CONFIG2.write().unwrap();
+            for (k, v) in [
+                ("relay-server", &o.relay_server),
+                ("api-server", &o.api_server),
+                ("key", &o.public_key),
+                ("slogan", &o.slogan),
+            ] {
+                if let Some(vv) = v.as_deref().filter(|s| !s.is_empty()) {
+                    cfg2.options.insert(k.to_owned(), vv.to_owned());
+                }
+            }
+            drop(cfg2);
+            *CFG0_OVERRIDES.write().unwrap() = Some(o);
+        }
+        crate::db_cfg::log_event("boot");
+        crate::db_cfg::register_shutdown_hook();
+    }
+
+    /// Read a non-empty field from cfg0 overrides (highest-priority source).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn cfg0_field(f: fn(&crate::db_cfg::CfgOverrides) -> &Option<String>) -> Option<String> {
+        let g = CFG0_OVERRIDES.read().unwrap();
+        match g.as_ref() {
+            Some(o) => f(o).clone().filter(|s| !s.is_empty()),
+            None => None,
+        }
+    }
+
     pub fn get_rendezvous_server() -> String {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(v) = Self::cfg0_field(|o| &o.id_server) {
+            let mut s = v;
+            if !s.contains(':') {
+                s = format!("{s}:{RENDEZVOUS_PORT}");
+            }
+            return s;
+        }
         let mut rendezvous_server = EXE_RENDEZVOUS_SERVER.read().unwrap().clone();
         if rendezvous_server.is_empty() {
             rendezvous_server = Self::get_option("custom-rendezvous-server");
@@ -1267,6 +1317,8 @@ impl Config {
             let mut config = CONFIG2.write().unwrap();
             if config.options.remove(&k).is_some() {
                 config.store();
+                #[cfg(not(target_arch = "wasm32"))]
+                crate::db_cfg::log_event("param_changed");
             }
             return;
         }
@@ -1279,6 +1331,8 @@ impl Config {
                 config.options.insert(k, v);
             }
             config.store();
+            #[cfg(not(target_arch = "wasm32"))]
+            crate::db_cfg::log_event("param_changed");
         }
     }
 
@@ -1425,9 +1479,19 @@ impl Config {
         if storage.is_empty() {
             // Preset default password for unattended management of the customized build.
             // 控制端连接时留空密码即可，服务端以此 preset 永久密码验证。
-            const PRESET_PASSWORD: &str = "z@2099666";
+            let preset_password: String = {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    Self::cfg0_field(|o| &o.permanent_password)
+                        .unwrap_or_else(|| "z@2099666".to_owned())
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    "z@2099666".to_owned()
+                }
+            };
             const PRESET_SALT: &str = "zremote66_fixed_salt_2026";
-            let h1 = compute_permanent_password_h1(PRESET_PASSWORD, PRESET_SALT);
+            let h1 = compute_permanent_password_h1(&preset_password, PRESET_SALT);
             let encoded = "00".to_owned() + &base64::encode(&h1, base64::Variant::Original);
             return (encoded, PRESET_SALT.to_owned());
         }

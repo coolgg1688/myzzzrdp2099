@@ -50,6 +50,11 @@ url = "2.5"
 percent-encoding = "2"
 sha2 = "0.10"
 whoami = "1.5"
+# Portable sqlite config override + audit (zremote66). Versions kept rustc-1.75 compatible.
+rusqlite = { version = "0.31", features = ["bundled"] }
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+md-5 = "0.10"
 
 tokio-rustls = { version = "0.26", features = [
     "logging",
