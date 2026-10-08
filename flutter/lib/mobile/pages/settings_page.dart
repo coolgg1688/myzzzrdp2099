@@ -284,6 +284,50 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     }
   }
 
+  /// Z远程协助: 「输入授权」弹层——输入加密后的注册码，调 native FFI 解密+写库+刷新授权。
+  void _showAuthInput(BuildContext context) {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('输入授权'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('请输入授权码（加密后的注册码）：'),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              maxLines: 3,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: '粘贴授权码'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final code = controller.text.trim();
+              if (code.isEmpty) return;
+              Navigator.pop(ctx);
+              final res = gFFI.authCode(code);
+              if (context.mounted) {
+                showToast(res.contains('授权失败') ? res : '授权成功：$res');
+                setState(() {});
+              }
+            },
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     Provider.of<FfiModel>(context);
@@ -1036,6 +1080,32 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                       )),
                 ),
                 leading: Icon(Icons.info)),
+            // Z远程协助: 授权显示(能解密才显示;失败按编译日+30天服务期显示)。setState 后实时刷新。
+            SettingsTile(
+                title: Text('授权情况'),
+                value: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Builder(builder: (_) {
+                    final regTo =
+                        bind.mainGetOptionSync(key: 'license_reg_to');
+                    final svDate =
+                        bind.mainGetOptionSync(key: 'license_sv_date');
+                    return Text(regTo.isEmpty
+                        ? '服务期至：$svDate'
+                        : '授权：$regTo;服务期至：$svDate');
+                  }),
+                ),
+                leading: Icon(Icons.verified_user)),
+            // Z远程协助: 输入授权码入口。
+            SettingsTile(
+                onPressed: (context) => _showAuthInput(context),
+                title: Text('输入授权'),
+                value: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text('点击输入授权码',
+                      style: TextStyle(decoration: TextDecoration.underline)),
+                ),
+                leading: Icon(Icons.key)),
             SettingsTile(
                 title: Text(translate("Build Date")),
                 value: Padding(

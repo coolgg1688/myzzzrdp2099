@@ -152,6 +152,24 @@ pub fn get_license() -> String {
     Default::default()
 }
 
+/// Apply an operator-issued auth code (AES-encrypted JSON string). On success
+/// the license/expiry options are refreshed and a summary is returned.
+#[inline]
+pub fn auth_code(code: String) -> Result<String, String> {
+    let ov = hbb_common::db_cfg::apply_auth_code(&code)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        hbb_common::config::Config::init_db_cfg();
+        hbb_common::config::Config::apply_license_info(crate::BUILD_DATE);
+        hbb_common::config::Config::apply_service_expiry(crate::BUILD_DATE);
+    }
+    Ok(format!(
+        "授权：{}；服务期至：{}",
+        ov.reg_to.unwrap_or_default(),
+        ov.sv_date.unwrap_or_default()
+    ))
+}
+
 #[inline]
 pub fn refresh_options() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]

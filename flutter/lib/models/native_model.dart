@@ -33,6 +33,11 @@ typedef F5 = void Function(Pointer<Utf8>);
 // Z远程协助: free_local_config_info 的 native 签名必须用 Void(大写)作为返回类型，
 // 否则 NativeFunction<void Function(...)> 不是合法 NativeType，无法用于 Pointer 泛型。
 typedef F5Native = Void Function(Pointer<Utf8>);
+// Z远程协助: 输入授权码——rdc_auth_code(密文 CString)→结果 CString；rdc_auth_code_free 释放返回值。
+typedef F6 = Pointer<Utf8> Function(Pointer<Utf8>);
+typedef F6Dart = Pointer<Utf8> Function(Pointer<Utf8>);
+typedef F7Native = Void Function(Pointer<Utf8>);
+typedef F7Dart = void Function(Pointer<Utf8>);
 typedef HandleEvent = Future<void> Function(Map<String, dynamic> evt);
 
 // Z远程协助: 在后台 isolate 内经地址重建 get_local_config_info / free_local_config_info 指针并调用。
@@ -100,6 +105,9 @@ class PlatformFFI {
   Pointer<NativeFunction<F4>>? _get_local_config_info_ptr;
   Pointer<NativeFunction<F5Native>>? _free_local_config_info_ptr;
   F5? _free_local_config_info;
+  // Z远程协助: 输入授权码 FFI(rdc_auth_code / rdc_auth_code_free)。web 缺失置 null。
+  F6Dart? _rdc_auth_code;
+  F7Dart? _rdc_auth_code_free;
 
   static get localeName => Platform.localeName;
 
@@ -180,6 +188,26 @@ class PlatformFFI {
     }
   }
 
+  /// Z远程协助: 输入授权码(加密后的注册码)→rust 解密+UPSERT cfg0+刷新授权选项，
+  /// 返回结果字符串(成功为「授权：…；服务期至：…」，失败以「授权失败：」开头)。
+  String authCode(String code) {
+    if (_rdc_auth_code == null || _rdc_auth_code_free == null) {
+      return '授权失败：当前平台不支持';
+    }
+    final c = code.toNativeUtf8();
+    try {
+      final p = _rdc_auth_code!(c);
+      if (p == nullptr) return '授权失败：未知错误';
+      try {
+        return p.toDartString();
+      } finally {
+        _rdc_auth_code_free!(p);
+      }
+    } finally {
+      malloc.free(c);
+    }
+  }
+
   Uint8List? getRgba(SessionID sessionId, int display, int bufSize) {
     if (_session_get_rgba == null) return null;
     final sessionIdStr = sessionId.toString();
@@ -244,6 +272,17 @@ class PlatformFFI {
         _free_local_config_info = null;
         _get_local_config_info_ptr = null;
         _free_local_config_info_ptr = null;
+      }
+      try {
+        // Z远程协助: 输入授权码 FFI。
+        _rdc_auth_code = dylib.lookupFunction<F6Dart, F6>("rdc_auth_code");
+        _rdc_auth_code_free = dylib
+            .lookup<NativeFunction<F7Native>>("rdc_auth_code_free")
+            .asFunction<F7Dart>();
+      } catch (_) {
+        // web 等未导出该符号，禁用「输入授权」。
+        _rdc_auth_code = null;
+        _rdc_auth_code_free = null;
       }
       try {
         // SYSTEM user failed

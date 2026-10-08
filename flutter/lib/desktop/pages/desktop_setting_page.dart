@@ -2507,6 +2507,50 @@ class _About extends StatefulWidget {
 }
 
 class _AboutState extends State<_About> {
+  /// Z远程协助: 「输入授权」弹层——输入加密后的注册码，调 native FFI 解密+写库+刷新授权。
+  void _showAuthInput(BuildContext context) {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('输入授权'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('请输入授权码（加密后的注册码）：'),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              maxLines: 3,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: '粘贴授权码'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final code = controller.text.trim();
+              if (code.isEmpty) return;
+              Navigator.pop(ctx);
+              final res = gFFI.authCode(code);
+              if (context.mounted) {
+                showToast(res.contains('授权失败') ? res : '授权成功：$res');
+                setState(() {});
+              }
+            },
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return futureBuilder(future: () async {
@@ -2552,6 +2596,11 @@ class _AboutState extends State<_About> {
                 SelectionArea(
                     child: Text('服务期至：$_svDate')
                         .marginSymmetric(vertical: 4.0)),
+              // Z远程协助: 输入授权入口。
+              InkWell(
+                  onTap: () => _showAuthInput(context),
+                  child: Text('输入授权', style: linkStyle)
+                      .marginSymmetric(vertical: 4.0)),
               SelectionArea(
                   child: Text('${translate('Build Date')}: $buildDate')
                       .marginSymmetric(vertical: 4.0)),

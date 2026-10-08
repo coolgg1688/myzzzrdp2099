@@ -1735,6 +1735,42 @@ pub extern "C" fn free_local_config_info(ptr: *mut std::os::raw::c_char) {
     }
 }
 
+/// Z远程协助: 输入授权码。接收 AES 密文(CString)，解密+UPSERT cfg0 后返回结果
+/// CString(成功为「授权：…；服务期至：…」，失败以「授权失败：」开头)。调用方负责释放。
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn rdc_auth_code(code: *const std::os::raw::c_char) -> *mut std::os::raw::c_char {
+    use std::ffi::{CStr, CString};
+    let msg = if code.is_null() {
+        "授权失败：空输入".to_owned()
+    } else {
+        let s = match unsafe { CStr::from_ptr(code) }.to_str() {
+            Ok(s) => s.to_owned(),
+            Err(_) => "授权失败：编码错误".to_owned(),
+        };
+        match crate::ui_interface::auth_code(s) {
+            Ok(m) => m,
+            Err(e) => format!("授权失败：{e}"),
+        }
+    };
+    match CString::new(msg) {
+        Ok(c) => c.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Z远程协助: 释放 rdc_auth_code 返回的 CString(同一 Rust 分配器)。
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn rdc_auth_code_free(ptr: *mut std::os::raw::c_char) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        drop(std::ffi::CString::from_raw(ptr));
+    }
+}
+
 pub fn session_next_rgba(session_id: SessionID, display: usize) {
     if let Some(s) = sessions::get_session_by_session_id(&session_id) {
         return s.ui_handler.next_rgba(display);
