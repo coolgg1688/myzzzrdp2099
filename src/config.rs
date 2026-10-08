@@ -945,6 +945,13 @@ impl Config {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn apply_service_expiry(build_date: &str) {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // Z远程协助: 每次都用实时日期比对。先清除旧的超期文案，避免授权续期后残留旧提示
+        // (未超期时也需清掉，否则前端连接时一直读到残留的 service_expiry)。
+        {
+            let mut cfg2 = CONFIG2.write().unwrap();
+            cfg2.options.remove("service_expiry");
+            drop(cfg2);
+        }
         let o = CFG0_OVERRIDES.read().unwrap();
         let Some(o) = o.as_ref() else { return };
         let sv = match o.sv_date.as_deref().filter(|s| !s.is_empty()) {
