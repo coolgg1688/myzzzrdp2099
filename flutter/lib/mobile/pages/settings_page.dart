@@ -308,6 +308,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Z远程协助: 输入框占弹窗宽度 90%。
                   FractionallySizedBox(
                     widthFactor: 0.9,
                     child: TextField(
@@ -317,27 +318,38 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                       decoration: const InputDecoration(hintText: '粘贴授权码'),
                     ),
                   ),
+                  // Z远程协助: 取消/确认按钮紧贴输入框下划线下，右对齐，间距16，
+                  // 观感整洁高大上。
+                  const SizedBox(height: 4),
+                  FractionallySizedBox(
+                    widthFactor: 0.9,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('取消'),
+                        ),
+                        const SizedBox(width: 16),
+                        TextButton(
+                          onPressed: () async {
+                            final code = controller.text.trim();
+                            if (code.isEmpty) return;
+                            Navigator.pop(ctx);
+                            final res = gFFI.authCode(code);
+                            if (!context.mounted) return;
+                            showToast(res.contains('授权失败')
+                                ? res
+                                : '授权成功：$res');
+                            setState(() {});
+                          },
+                          child: const Text('确认'),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('取消'),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    final code = controller.text.trim();
-                    if (code.isEmpty) return;
-                    Navigator.pop(ctx);
-                    final res = gFFI.authCode(code);
-                    if (!context.mounted) return;
-                    showToast(
-                        res.contains('授权失败') ? res : '授权成功：$res');
-                    setState(() {});
-                  },
-                  child: const Text('确认'),
-                ),
-              ],
             ),
           ),
         );

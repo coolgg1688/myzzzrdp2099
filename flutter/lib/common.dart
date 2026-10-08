@@ -2586,12 +2586,11 @@ connectMainDesktop(String id,
           title: const Text('服务已超期'),
           content: Text(expiry),
           actions: [
+            // Z远程协助: PC 端(win/linux/mac)授权超期时主控端只能取消，
+            // 不提供「继续连接」；授权正确后才能执行主控端操作。
             TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
                 child: const Text('取消')),
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('仍要连接')),
           ],
         ),
       );

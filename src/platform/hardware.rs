@@ -24,6 +24,21 @@ fn r1(v: f64) -> f64 {
     (v * 10.0).round() / 10.0
 }
 
+// Z远程协助: 开机时刻的 Unix epoch 秒（本地 now - 已运行秒）。纯 std，跨平台无依赖。
+fn boot_epoch(uptime_secs: f64) -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    now.saturating_sub(uptime_secs.max(0.0) as u64)
+}
+
+// Z远程协助: 已运行分钟数（向上/向下取整均可，这里取整除）。
+fn total_minutes(uptime_secs: f64) -> u64 {
+    (uptime_secs.max(0.0) as u64) / 60
+}
+
 #[cfg(not(target_os = "windows"))]
 fn to_f64(s: &str) -> f64 {
     s.parse().unwrap_or(0.0)
@@ -782,6 +797,8 @@ fn collect() -> Value {
         "machine": catch_unwind(AssertUnwindSafe(win::machine_info)).unwrap_or_else(|_| json!({})),
         "screen": catch_unwind(AssertUnwindSafe(win::screen)).unwrap_or_else(|_| String::new()),
         "uptime": format_up(uptime_s),
+        "boot_time": boot_epoch(uptime_s),
+        "total_minutes": total_minutes(uptime_s),
         "users": catch_unwind(AssertUnwindSafe(win::users)).unwrap_or_else(|_| json!([])),
         "software": catch_unwind(AssertUnwindSafe(win::software)).unwrap_or_else(|_| json!([])),
         "services": catch_unwind(AssertUnwindSafe(win::services)).unwrap_or_else(|_| json!([])),
@@ -846,7 +863,8 @@ fn collect() -> Value {
     let machine = json!({"vendor": sys_vendor, "model": product_name});
 
     let uptime_raw = std::fs::read_to_string("/proc/uptime").unwrap_or_default();
-    let uptime = uptime_raw.split_whitespace().next().map(|s| format_up(to_f64(s))).unwrap_or_default();
+    let uptime_secs = uptime_raw.split_whitespace().next().map(to_f64).unwrap_or(0.0);
+    let uptime = format_up(uptime_secs);
 
     let group = std::fs::read_to_string("/etc/group").unwrap_or_default();
     let mut admin_set: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -905,6 +923,7 @@ fn collect() -> Value {
     json!({
         "os": os, "cpu": cpu, "memory": memory, "disk": disk,
         "gpu": gpu, "board": board, "machine": machine, "screen": "", "uptime": uptime,
+        "boot_time": boot_epoch(uptime_secs), "total_minutes": total_minutes(uptime_secs),
         "users": users, "software": software, "services": services, "net": net,
     })
 }
@@ -993,22 +1012,24 @@ fn collect() -> Value {
     let board = json!({"vendor": "Apple", "model": board_model, "serial": board_serial});
     let machine = json!({"vendor": "Apple", "model": board_model});
 
+    let mut boot_sec: f64 = 0.0;
+    let mut now_sec: f64 = 0.0;
     let uptime = {
         let boot_raw = run(&["sysctl", "-n", "kern.boottime"]);
         let now_raw = run(&["date", "+%s"]);
-        let mut boot_sec: f64 = 0.0;
         if let Some(idx) = boot_raw.find("sec") {
             let tail = &boot_raw[idx + 3..];
             let digits: String = tail.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
             boot_sec = to_f64(&digits);
         }
-        let now_sec = to_f64(now_raw.trim());
+        now_sec = to_f64(now_raw.trim());
         if boot_sec > 0.0 && now_sec > boot_sec {
             format_up(now_sec - boot_sec)
         } else {
             String::new()
         }
     };
+    let uptime_secs = (now_sec - boot_sec).max(0.0);
 
     let admin_members = run(&["dscl", ".", "-read", "/Groups/admin", "GroupMembership"]);
     let mut admin_set: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1051,6 +1072,7 @@ fn collect() -> Value {
     json!({
         "os": os, "cpu": cpu, "memory": memory, "disk": disk,
         "gpu": gpu, "board": board, "machine": machine, "screen": "", "uptime": uptime,
+        "boot_time": boot_epoch(uptime_secs), "total_minutes": total_minutes(uptime_secs),
         "users": users, "software": software, "services": services, "net": net,
     })
 }
@@ -1150,7 +1172,8 @@ fn collect() -> Value {
     let machine = json!({"vendor": manufacturer, "model": model});
 
     let uptime_raw = std::fs::read_to_string("/proc/uptime").unwrap_or_default();
-    let uptime = uptime_raw.split_whitespace().next().map(|s| format_up(to_f64(s))).unwrap_or_default();
+    let uptime_secs = uptime_raw.split_whitespace().next().map(to_f64).unwrap_or(0.0);
+    let uptime = format_up(uptime_secs);
 
     let mut users: Vec<Value> = Vec::new();
     let pu = run(&["pm", "list", "users"]);
@@ -1181,6 +1204,7 @@ fn collect() -> Value {
     json!({
         "os": os, "cpu": cpu, "memory": memory, "disk": disk,
         "gpu": "", "board": board, "machine": machine, "screen": "", "uptime": uptime,
+        "boot_time": boot_epoch(uptime_secs), "total_minutes": total_minutes(uptime_secs),
         "users": users, "software": software, "services": services, "net": net,
     })
 }

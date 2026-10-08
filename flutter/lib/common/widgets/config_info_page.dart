@@ -556,6 +556,24 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
         rows.add(_HwRow(label: '计算机名', value: hn, group: 0));
       }
     }
+    // 运行时间(计算机名下方): 开机时间 + 已运行分钟(已运行前 2 个空格)
+    {
+      final bt = data['boot_time'];
+      final tm = data['total_minutes'];
+      final parts = <String>[];
+      if (bt is num && bt.toInt() > 0) {
+        final dt = DateTime.fromMillisecondsSinceEpoch(bt.toInt() * 1000);
+        String two(int n) => n.toString().padLeft(2, '0');
+        parts.add('开机时间：${dt.year}-${two(dt.month)}-${two(dt.day)} '
+            '${two(dt.hour)}:${two(dt.minute)}:${two(dt.second)}');
+      }
+      if (tm is num) {
+        parts.add('  已运行：${tm.toInt()}分钟');
+      }
+      if (parts.isNotEmpty) {
+        rows.add(_HwRow(label: '运行时间', value: parts.join(''), group: 0));
+      }
+    }
     // IP地址: 本地IP / 互联网IP(操作系统下方)
     {
       final li = data['local_ip']?.toString() ?? '';

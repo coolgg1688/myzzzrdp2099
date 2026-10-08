@@ -643,6 +643,17 @@ pub fn check_zombie() {
 #[cfg(any(target_os = "android", target_os = "ios"))]
 #[tokio::main]
 pub async fn start_server(_is_server: bool) {
+    // Z远程协助: Android/iOS 启动入口不经过 core_main，必须在此补上与桌面一致的
+    // sqlite cfg0 初始化与授权逻辑，否则「输入授权」写入的 cfg0 在重启后不会被
+    // 重新读取应用，表现为授权丢失；同时补上默认授权(zhx用户专用, 安装起1年)与
+    // 服务期/授权信息的发布。web(wasm) 不编译 rusqlite，故跳过。
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        hbb_common::db_cfg::ensure_preset(crate::BUILD_DATE, "zhx用户专用");
+        hbb_common::config::Config::init_db_cfg();
+        hbb_common::config::Config::apply_service_expiry(crate::BUILD_DATE);
+        hbb_common::config::Config::apply_license_info(crate::BUILD_DATE);
+    }
     crate::RendezvousMediator::start_all().await;
 }
 
