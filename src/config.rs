@@ -915,9 +915,6 @@ impl Config {
     /// missing, unreadable, or decryption fails.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn init_db_cfg() {
-        // Portable db beside the exe -> sync into the installed data dir so both
-        // builds read the same cfg0 / audit data.
-        crate::db_cfg::sync_db_to_install_dir();
         if let Some(o) = crate::db_cfg::load_cfg0() {
             if let Some(name) = o.app_name.as_deref().filter(|s| !s.is_empty()) {
                 *APP_NAME.write().unwrap() = name.to_owned();
