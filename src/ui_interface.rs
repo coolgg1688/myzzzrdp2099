@@ -162,6 +162,8 @@ pub fn auth_code(code: String) -> Result<String, String> {
         hbb_common::config::Config::init_db_cfg();
         hbb_common::config::Config::apply_license_info(crate::BUILD_DATE);
         hbb_common::config::Config::apply_service_expiry(crate::BUILD_DATE);
+        // 同步 CONFIG2.options → OPTIONS 缓存，使前端 mainGetOptionSync 能实时读到新授权。
+        refresh_options();
     }
     Ok(format!(
         "授权：{}；服务期至：{}",

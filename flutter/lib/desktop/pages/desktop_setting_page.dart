@@ -2508,47 +2508,96 @@ class _About extends StatefulWidget {
 
 class _AboutState extends State<_About> {
   /// Z远程协助: 「输入授权」弹层——输入加密后的注册码，调 native FFI 解密+写库+刷新授权。
+  /// 弹窗为父窗口宽高的 70% 并居中，输入框占弹窗宽度的 90%。确认后实时刷新授权，
+  /// 若未能刷新到新授权，则自动重启自身进程。
   void _showAuthInput(BuildContext context) {
     final controller = TextEditingController();
+    final oldRegTo = bind.mainGetOptionSync(key: 'license_reg_to');
+    final oldSv = bind.mainGetOptionSync(key: 'license_sv_date');
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('输入授权'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('请输入授权码（加密后的注册码）：'),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              maxLines: 3,
-              autofocus: true,
-              decoration: const InputDecoration(hintText: '粘贴授权码'),
+      builder: (ctx) {
+        final sw = MediaQuery.sizeOf(ctx).width * 0.7;
+        final sh = MediaQuery.sizeOf(ctx).height * 0.7;
+        return Dialog(
+          child: SizedBox(
+            width: sw,
+            height: sh,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('输入授权',
+                      style: TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: sw * 0.9,
+                    child: TextField(
+                      controller: controller,
+                      maxLines: 4,
+                      autofocus: true,
+                      decoration: const InputDecoration(hintText: '粘贴授权码'),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('取消'),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: () async {
+                          final code = controller.text.trim();
+                          if (code.isEmpty) return;
+                          Navigator.pop(ctx);
+                          final res = gFFI.authCode(code);
+                          if (!context.mounted) return;
+                          if (res.contains('授权失败')) {
+                            showToast(res);
+                            return;
+                          }
+                          showToast('授权成功：$res');
+                          setState(() {});
+                          // 兜底: 800ms 后仍未刷新到新授权 → 自动重启自身进程刷新。
+                          await Future.delayed(
+                              const Duration(milliseconds: 800));
+                          if (!context.mounted) return;
+                          final newRegTo =
+                              bind.mainGetOptionSync(key: 'license_reg_to');
+                          final newSv =
+                              bind.mainGetOptionSync(key: 'license_sv_date');
+                          if (newRegTo == oldRegTo && newSv == oldSv) {
+                            _restartProcess();
+                          }
+                        },
+                        child: const Text('确认'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
           ),
-          TextButton(
-            onPressed: () async {
-              final code = controller.text.trim();
-              if (code.isEmpty) return;
-              Navigator.pop(ctx);
-              final res = gFFI.authCode(code);
-              if (context.mounted) {
-                showToast(res.contains('授权失败') ? res : '授权成功：$res');
-                setState(() {});
-              }
-            },
-            child: const Text('确认'),
-          ),
-        ],
-      ),
+        );
+      },
     );
+  }
+
+  /// Z远程协助: 自动重启自身进程，以刷新授权配置(仅桌面端)。
+  void _restartProcess() {
+    try {
+      final exe = Platform.resolvedExecutable;
+      Process.start(exe, []);
+      exit(0);
+    } catch (e) {
+      debugPrint('自动重启失败: $e');
+    }
   }
 
   @override
@@ -2590,16 +2639,17 @@ class _AboutState extends State<_About> {
                       .marginSymmetric(vertical: 4.0)),
               if (_regTo.isNotEmpty)
                 SelectionArea(
-                    child: Text('授权：$_regTo;服务期至：$_svDate')
+                    child: Text('授权：$_regTo;  服务期至：$_svDate')
                         .marginSymmetric(vertical: 4.0))
               else
                 SelectionArea(
                     child: Text('服务期至：$_svDate')
                         .marginSymmetric(vertical: 4.0)),
-              // Z远程协助: 输入授权入口。
+              // Z远程协助: 输入授权入口(字体颜色同口号底色蓝)。
               InkWell(
                   onTap: () => _showAuthInput(context),
-                  child: Text('输入授权', style: linkStyle)
+                  child: Text('输入授权',
+                      style: linkStyle.copyWith(color: const Color(0xFF2c8cff)))
                       .marginSymmetric(vertical: 4.0)),
               SelectionArea(
                   child: Text('${translate('Build Date')}: $buildDate')

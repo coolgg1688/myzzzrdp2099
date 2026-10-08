@@ -118,7 +118,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       if (!isOutgoingOnly) buildIDBoard(context),
       if (!isOutgoingOnly) buildPasswordBoard(context),
       // Z远程协助: 一次性密码下方另起一行的「查看本机配置」链接(win/linux/mac)。
-      if (!isOutgoingOnly) _buildLocalConfigLink(context),
+      // 该功能当前存在异常，暂隐藏；待修复后再恢复。
+      // if (!isOutgoingOnly) _buildLocalConfigLink(context),
       FutureBuilder<Widget>(
         future: Future.value(
             Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
