@@ -245,6 +245,12 @@ fn execute(path: PathBuf, args: Vec<String>, _ui: bool) {
     }
 
     cmd.env(APPNAME_RUNTIME_ENV_KEY, exe_name);
+    // zremote66: expose the real (user-launched) exe directory so the payload can
+    // side-load <orig>/app_data/zrdp.db instead of the extraction dir under
+    // %LOCALAPPDATA%. Kept empty when it cannot be resolved.
+    if let Some(dir) = exe.parent() {
+        cmd.env("RUSTDESK_ORIG_EXE_DIR", dir.to_string_lossy().to_string());
+    }
     if use_null_stdio() {
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
