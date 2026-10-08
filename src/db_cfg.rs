@@ -17,7 +17,7 @@ use base64::Engine as _;
 use md5::{Digest, Md5};
 use rusqlite::{Connection, OptionalExtension};
 use serde_derive::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const DB_FILE_NAME: &str = "zrdp.db";
 pub const APP_DATA_DIR: &str = "app_data";
@@ -78,6 +78,15 @@ use std::fs;
 /// DB path. Desktop: `<exe_dir>/app_data/zrdp.db` (sidecar, portable + installed
 /// both read the same place). Android: app data dir (`Config::get_home()` +
 /// `app_data/zrdp.db`) — there is no writable "exe" dir on Android.
+///
+/// zremote66 single-file mode: the self-extracting packer runs the payload from a
+/// per-version extraction dir under `%LOCALAPPDATA%`, so `current_exe()` points
+/// there and the user-placed sidecar `app_data/zrdp.db` would be missed. The
+/// packer therefore exports `RUSTDESK_ORIG_EXE_DIR` (the real exe directory the
+/// user launched) and `RUSTDESK_APPNAME`. When those are present we read/write the
+/// sidecar at `<orig>/app_data/zrdp.db` instead, so the portable config is found
+/// and authorizations persist beside the actual exe. The directory is created
+/// on demand by `open_conn`.
 fn db_path() -> PathBuf {
     #[cfg(target_os = "android")]
     {
@@ -90,6 +99,14 @@ fn db_path() -> PathBuf {
     }
     #[cfg(not(target_os = "android"))]
     {
+        // zremote66 single-file: prefer the real exe dir exported by the packer.
+        if std::env::var("RUSTDESK_APPNAME").is_ok() {
+            if let Ok(orig) = std::env::var("RUSTDESK_ORIG_EXE_DIR") {
+                if !orig.trim().is_empty() {
+                    return Path::new(&orig).join(APP_DATA_DIR).join(DB_FILE_NAME);
+                }
+            }
+        }
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
                 return dir.join(APP_DATA_DIR).join(DB_FILE_NAME);
