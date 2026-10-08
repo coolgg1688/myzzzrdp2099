@@ -571,7 +571,23 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
             '${two(dt.hour)}:${two(dt.minute)}:${two(dt.second)}');
       }
       if (tm is num) {
-        parts.add('  已运行：${tm.toInt()}分钟');
+        final m = tm.toInt();
+        if (m < 60) {
+          parts.add('  已运行：$m分钟');
+        } else if (m < 1440) {
+          final h = m ~/ 60;
+          final r = m % 60;
+          parts.add('  已运行：$h小时${r > 0 ? '$r分钟' : ''}');
+        } else {
+          final d = m ~/ 1440;
+          final rem = m % 1440;
+          final h = rem ~/ 60;
+          final r = rem % 60;
+          final sb = StringBuffer('  已运行：$d天');
+          if (h > 0) sb.write('$h小时');
+          if (r > 0) sb.write('$r分钟');
+          parts.add(sb.toString());
+        }
       }
       if (parts.isNotEmpty) {
         rows.add(_HwRow(label: '运行时间', value: parts.join(''), group: 0));
