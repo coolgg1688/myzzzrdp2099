@@ -939,6 +939,51 @@ impl Config {
         crate::db_cfg::register_shutdown_hook();
     }
 
+    /// Compute the service-expiry banner message from cfg0. `sv_date` default =
+    /// build date + 30 days; returns `Some(text)` only when today is past it.
+    /// `build_date` must be `"YYYY-MM-DD..."` (the caller crate's compiled date).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn apply_service_expiry(build_date: &str) {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let o = CFG0_OVERRIDES.read().unwrap();
+        let Some(o) = o.as_ref() else { return };
+        let sv = match o.sv_date.as_deref().filter(|s| !s.is_empty()) {
+            Some(s) => s.chars().take(10).collect::<String>(),
+            None => {
+                let bd = match build_date.get(..10) {
+                    Some(b) => b,
+                    None => return,
+                };
+                let d = match chrono::NaiveDate::parse_from_str(bd, "%Y-%m-%d") {
+                    Ok(d) => d,
+                    Err(_) => return,
+                };
+                match d.checked_add_signed(chrono::Duration::days(30)) {
+                    Some(d) => d.format("%Y-%m-%d").to_string(),
+                    None => return,
+                }
+            }
+        };
+        if today > sv {
+            let reg_to = o.reg_to.as_deref().unwrap_or("");
+            let msg = if reg_to.is_empty() {
+                format!(
+                    "您的服务期：{sv}，已超期，请联系 wechat: tom945 电话：13030882113续期。"
+                )
+            } else {
+                format!(
+                    "{reg_to}，您的服务期：{sv}，已超期，请联系 wechat: tom945 电话：13030882113续期。"
+                )
+            };
+            let mut cfg2 = CONFIG2.write().unwrap();
+            cfg2
+                .options
+                .insert("service_expiry".to_owned(), msg.clone());
+            drop(cfg2);
+            log::error!("{}", msg);
+        }
+    }
+
     /// Read a non-empty field from cfg0 overrides (highest-priority source).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn cfg0_field(f: fn(&crate::db_cfg::CfgOverrides) -> &Option<String>) -> Option<String> {

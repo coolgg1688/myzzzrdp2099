@@ -41,6 +41,12 @@ pub struct CfgOverrides {
     pub domain: Option<String>,
     pub app_name: Option<String>,
     pub permanent_password: Option<String>,
+    /// 注册给谁
+    pub reg_to: Option<String>,
+    /// 注册日期 (YYYY-MM-DD)
+    pub reg_date: Option<String>,
+    /// 服务截止日期 (YYYY-MM-DD); 缺省时 = 编译日期 + 30 天
+    pub sv_date: Option<String>,
 }
 
 fn aes_key() -> [u8; 32] {
