@@ -287,6 +287,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   /// Z远程协助: 「输入授权」弹层——输入加密后的注册码，调 native FFI 解密+写库+刷新授权。
   /// 弹窗为父窗口宽高的 70% 并居中，输入框占弹窗宽度的 90%。移动端 get_option 直读
   /// CONFIG2.options，确认授权后 setState 即可实时刷新(无需重启进程)。
+  /// 注意: 不能用裸 `Dialog`(与 common.dart 自定义 Dialog<T> 冲突, 导致 web 编译失败), 改用 AlertDialog。
   void _showAuthInput(BuildContext context) {
     final controller = TextEditingController();
     showDialog(
@@ -294,22 +295,18 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
       builder: (ctx) {
         final sw = MediaQuery.sizeOf(ctx).width * 0.7;
         final sh = MediaQuery.sizeOf(ctx).height * 0.7;
-        return Dialog(
+        return Center(
           child: SizedBox(
             width: sw,
             height: sh,
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
+            child: AlertDialog(
+              title: const Text('输入授权'),
+              content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('输入授权',
-                      style: TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: sw * 0.9,
+                  FractionallySizedBox(
+                    widthFactor: 0.9,
                     child: TextField(
                       controller: controller,
                       maxLines: 4,
@@ -317,32 +314,27 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                       decoration: const InputDecoration(hintText: '粘贴授权码'),
                     ),
                   ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text('取消'),
-                      ),
-                      const SizedBox(width: 8),
-                      TextButton(
-                        onPressed: () async {
-                          final code = controller.text.trim();
-                          if (code.isEmpty) return;
-                          Navigator.pop(ctx);
-                          final res = gFFI.authCode(code);
-                          if (!context.mounted) return;
-                          showToast(
-                              res.contains('授权失败') ? res : '授权成功：$res');
-                          setState(() {});
-                        },
-                        child: const Text('确认'),
-                      ),
-                    ],
-                  ),
                 ],
               ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final code = controller.text.trim();
+                    if (code.isEmpty) return;
+                    Navigator.pop(ctx);
+                    final res = gFFI.authCode(code);
+                    if (!context.mounted) return;
+                    showToast(
+                        res.contains('授权失败') ? res : '授权成功：$res');
+                    setState(() {});
+                  },
+                  child: const Text('确认'),
+                ),
+              ],
             ),
           ),
         );

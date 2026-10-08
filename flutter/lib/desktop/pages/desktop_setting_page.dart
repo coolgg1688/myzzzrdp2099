@@ -2510,6 +2510,7 @@ class _AboutState extends State<_About> {
   /// Z远程协助: 「输入授权」弹层——输入加密后的注册码，调 native FFI 解密+写库+刷新授权。
   /// 弹窗为父窗口宽高的 70% 并居中，输入框占弹窗宽度的 90%。确认后实时刷新授权，
   /// 若未能刷新到新授权，则自动重启自身进程。
+  /// 注意: 不能用裸 `Dialog`(与 common.dart 自定义 Dialog<T> 冲突, 导致 web 编译失败), 改用 AlertDialog。
   void _showAuthInput(BuildContext context) {
     final controller = TextEditingController();
     final oldRegTo = bind.mainGetOptionSync(key: 'license_reg_to');
@@ -2519,22 +2520,18 @@ class _AboutState extends State<_About> {
       builder: (ctx) {
         final sw = MediaQuery.sizeOf(ctx).width * 0.7;
         final sh = MediaQuery.sizeOf(ctx).height * 0.7;
-        return Dialog(
+        return Center(
           child: SizedBox(
             width: sw,
             height: sh,
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
+            child: AlertDialog(
+              title: const Text('输入授权'),
+              content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('输入授权',
-                      style: TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: sw * 0.9,
+                  FractionallySizedBox(
+                    widthFactor: 0.9,
                     child: TextField(
                       controller: controller,
                       maxLines: 4,
@@ -2542,46 +2539,40 @@ class _AboutState extends State<_About> {
                       decoration: const InputDecoration(hintText: '粘贴授权码'),
                     ),
                   ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text('取消'),
-                      ),
-                      const SizedBox(width: 8),
-                      TextButton(
-                        onPressed: () async {
-                          final code = controller.text.trim();
-                          if (code.isEmpty) return;
-                          Navigator.pop(ctx);
-                          final res = gFFI.authCode(code);
-                          if (!context.mounted) return;
-                          if (res.contains('授权失败')) {
-                            showToast(res);
-                            return;
-                          }
-                          showToast('授权成功：$res');
-                          setState(() {});
-                          // 兜底: 800ms 后仍未刷新到新授权 → 自动重启自身进程刷新。
-                          await Future.delayed(
-                              const Duration(milliseconds: 800));
-                          if (!context.mounted) return;
-                          final newRegTo =
-                              bind.mainGetOptionSync(key: 'license_reg_to');
-                          final newSv =
-                              bind.mainGetOptionSync(key: 'license_sv_date');
-                          if (newRegTo == oldRegTo && newSv == oldSv) {
-                            _restartProcess();
-                          }
-                        },
-                        child: const Text('确认'),
-                      ),
-                    ],
-                  ),
                 ],
               ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final code = controller.text.trim();
+                    if (code.isEmpty) return;
+                    Navigator.pop(ctx);
+                    final res = gFFI.authCode(code);
+                    if (!context.mounted) return;
+                    if (res.contains('授权失败')) {
+                      showToast(res);
+                      return;
+                    }
+                    showToast('授权成功：$res');
+                    setState(() {});
+                    // 兜底: 800ms 后仍未刷新到新授权 → 自动重启自身进程刷新。
+                    await Future.delayed(const Duration(milliseconds: 800));
+                    if (!context.mounted) return;
+                    final newRegTo =
+                        bind.mainGetOptionSync(key: 'license_reg_to');
+                    final newSv =
+                        bind.mainGetOptionSync(key: 'license_sv_date');
+                    if (newRegTo == oldRegTo && newSv == oldSv) {
+                      _restartProcess();
+                    }
+                  },
+                  child: const Text('确认'),
+                ),
+              ],
             ),
           ),
         );
