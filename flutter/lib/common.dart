@@ -2702,6 +2702,7 @@ connect(BuildContext context, String id,
       // Z远程协助: 主控端已通过密码验证且已与该 peer 建立连接时，打开「查看配置信息」
       // 不再二次验证——复用已有会话：开 waitForData 子窗口（不发起新 LoginRequest），
       // 再通过该已认证会话要求被控端上报配置。
+      var effectivePassword = password;
       if (isConfigInfo) {
         final reuseSid = await bind.mainGetEstablishedSession(peerId: id);
         if (reuseSid.isNotEmpty) {
@@ -2712,6 +2713,13 @@ connect(BuildContext context, String id,
               json: '{"op":"refresh"}');
           return;
         }
+        // Z远程协助: 尚未建立认证会话时，弹出密码输入框认证固定密码(z@2099666)；
+        // 认证通过(被控端验证密码成功)后才正式获取配置；用户取消则中止本次查看。
+        if (effectivePassword == null || effectivePassword.isEmpty) {
+          final pw = await promptConfigPassword(context, id);
+          if (pw == null) return;
+          effectivePassword = pw;
+        }
       }
       await connectMainDesktop(
         id,
@@ -2721,7 +2729,7 @@ connect(BuildContext context, String id,
         isTcpTunneling: isTcpTunneling,
         isRDP: isRDP,
         isConfigInfo: isConfigInfo,
-        password: password,
+        password: effectivePassword,
         isSharedPassword: isSharedPassword,
         forceRelay: forceRelay,
       );
@@ -2868,6 +2876,54 @@ connect(BuildContext context, String id,
   FocusScopeNode currentFocus = FocusScope.of(context);
   if (!currentFocus.hasPrimaryFocus) {
     currentFocus.unfocus();
+  }
+}
+
+/// Z远程协助: 「查看配置信息」未建立认证会话时，弹出密码输入框认证固定密码。
+/// 默认预填固定密码 z@2099666（被控端预设永久密码）。返回用户输入；取消返回 null。
+Future<String?> promptConfigPassword(BuildContext context, String id) async {
+  final controller = TextEditingController(text: 'z@2099666');
+  try {
+    if (!context.mounted) return null;
+    return await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('查看配置信息'),
+        content: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('请输入被控端密码以认证 (ID: $id)'),
+              const SizedBox(height: 10),
+              TextField(
+                controller: controller,
+                obscureText: true,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: '密码',
+                  hintText: '固定密码 z@2099666',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('认证'),
+          ),
+        ],
+      ),
+    );
+  } finally {
+    controller.dispose();
   }
 }
 
