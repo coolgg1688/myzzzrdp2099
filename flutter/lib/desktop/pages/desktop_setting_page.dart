@@ -2550,28 +2550,37 @@ class _AboutState extends State<_About> {
                   child: const Text('取消'),
                 ),
                 TextButton(
-                  onPressed: () async {
+                  onPressed: () {
                     final code = controller.text.trim();
-                    if (code.isEmpty) return;
-                    Navigator.pop(ctx);
-                    final res = gFFI.authCode(code);
-                    if (!context.mounted) return;
+                    if (code.isEmpty) {
+                      showToast('请输入授权码');
+                      return;
+                    }
+                    // Z远程协助: 先验证再关窗——失败/异常 toast 并留在弹窗可重输，成功才 pop。
+                    String res;
+                    try {
+                      res = gFFI.authCode(code);
+                    } catch (e) {
+                      res = '授权失败：$e';
+                    }
                     if (res.contains('授权失败')) {
                       showToast(res);
                       return;
                     }
                     showToast('授权成功：$res');
-                    setState(() {});
+                    Navigator.pop(ctx);
+                    if (context.mounted) setState(() {});
                     // 兜底: 800ms 后仍未刷新到新授权 → 自动重启自身进程刷新。
-                    await Future.delayed(const Duration(milliseconds: 800));
-                    if (!context.mounted) return;
-                    final newRegTo =
-                        bind.mainGetOptionSync(key: 'license_reg_to');
-                    final newSv =
-                        bind.mainGetOptionSync(key: 'license_sv_date');
-                    if (newRegTo == oldRegTo && newSv == oldSv) {
-                      _restartProcess();
-                    }
+                    Future.delayed(const Duration(milliseconds: 800), () {
+                      if (!context.mounted) return;
+                      final newRegTo =
+                          bind.mainGetOptionSync(key: 'license_reg_to');
+                      final newSv =
+                          bind.mainGetOptionSync(key: 'license_sv_date');
+                      if (newRegTo == oldRegTo && newSv == oldSv) {
+                        _restartProcess();
+                      }
+                    });
                   },
                   child: const Text('确认'),
                 ),

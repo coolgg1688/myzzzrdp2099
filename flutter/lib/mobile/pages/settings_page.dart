@@ -332,19 +332,28 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                         ),
                         const SizedBox(width: 16),
                         TextButton(
-                          onPressed: () async {
+                          onPressed: () {
                             final code = controller.text.trim();
                             if (code.isEmpty) {
                               showToast('请输入授权码');
                               return;
                             }
+                            // Z远程协助: 先验证再关窗——任何异常/失败都 toast 并留在弹窗可重输，
+                            // 成功才 pop。避免"先 pop + 外部 context.mounted 提前 return +
+                            // 同步 FFI 抛异常被吞"导致的点确认无反馈。
+                            String res;
+                            try {
+                              res = gFFI.authCode(code);
+                            } catch (e) {
+                              res = '授权失败：$e';
+                            }
+                            if (res.contains('授权失败')) {
+                              showToast(res);
+                              return; // 保持弹窗，可重新输入
+                            }
+                            showToast('授权成功：$res');
                             Navigator.pop(ctx);
-                            final res = gFFI.authCode(code);
-                            if (!context.mounted) return;
-                            showToast(res.contains('授权失败')
-                                ? res
-                                : '授权成功：$res');
-                            setState(() {});
+                            if (context.mounted) setState(() {});
                           },
                           child: const Text('确认'),
                         ),
