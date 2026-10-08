@@ -75,15 +75,28 @@ fn aes_decrypt(b64: &str) -> anyhow::Result<Vec<u8>> {
 
 use std::fs;
 
-/// `<exe_dir>/app_data/zrdp.db` — the DB sits beside the executable (sidecar),
-/// so the portable build and the installed build both read the same location.
+/// DB path. Desktop: `<exe_dir>/app_data/zrdp.db` (sidecar, portable + installed
+/// both read the same place). Android: app data dir (`Config::get_home()` +
+/// `app_data/zrdp.db`) — there is no writable "exe" dir on Android.
 fn db_path() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            return dir.join(APP_DATA_DIR).join(DB_FILE_NAME);
+    #[cfg(target_os = "android")]
+    {
+        let mut d = crate::config::Config::get_home();
+        if d.as_os_str().is_empty() {
+            return PathBuf::new();
         }
+        d.push(APP_DATA_DIR);
+        d.join(DB_FILE_NAME)
     }
-    PathBuf::new()
+    #[cfg(not(target_os = "android"))]
+    {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                return dir.join(APP_DATA_DIR).join(DB_FILE_NAME);
+            }
+        }
+        PathBuf::new()
+    }
 }
 
 fn open_conn() -> Option<Connection> {
@@ -155,4 +168,93 @@ pub fn register_shutdown_hook() {
     unsafe {
         atexit(shutdown_cb);
     }
+}
+
+/// Serialize + AES-encrypt `ov`, then UPSERT into `zrdb_cfg` as `cfg0`:
+/// update the latest row when present, insert when absent.
+pub fn upsert_cfg0(ov: &CfgOverrides) -> bool {
+    let Some(conn) = open_conn() else {
+        return false;
+    };
+    let plain = match serde_json::to_vec(ov) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let enc = match aes_encrypt(&plain) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    let uid: Option<i64> = conn
+        .query_row(
+            "SELECT uid FROM zrdb_cfg WHERE type=?1 ORDER BY uid DESC LIMIT 1",
+            [CFG0_TYPE],
+            |r| r.get(0),
+        )
+        .unwrap_or(None);
+    let res = match uid {
+        Some(u) => conn.execute(
+            "UPDATE zrdb_cfg SET cfgs=?1 WHERE uid=?2",
+            rusqlite::params![enc, u],
+        ),
+        None => conn.execute(
+            "INSERT INTO zrdb_cfg(type, cfgs, status) VALUES(?1, ?2, 1)",
+            rusqlite::params![CFG0_TYPE, enc],
+        ),
+    };
+    res.is_ok()
+}
+
+/// Decrypt an operator-issued auth code (AES-encrypted JSON), merge its fields
+/// over the current cfg0, and UPSERT. Returns the merged overrides on success.
+pub fn apply_auth_code(enc: &str) -> Result<CfgOverrides, String> {
+    let plain = aes_decrypt(enc).map_err(|e| format!("注册码无法解密：{e}"))?;
+    let auth: CfgOverrides =
+        serde_json::from_slice(&plain).map_err(|e| format!("注册码格式无效：{e}"))?;
+    let mut merged = load_cfg0().unwrap_or_default();
+    macro_rules! merge {
+        ($($f:ident),*) => {
+            $( if auth.$f.is_some() { merged.$f = auth.$f; } )*
+        };
+    }
+    merge!(
+        id_server,
+        relay_server,
+        api_server,
+        public_key,
+        slogan,
+        domain,
+        app_name,
+        permanent_password,
+        reg_to,
+        reg_date,
+        sv_date
+    );
+    if !upsert_cfg0(&merged) {
+        return Err("写入数据库失败".to_owned());
+    }
+    Ok(merged)
+}
+
+/// On first launch (no cfg0 row yet) seed a preset license: reg_to = the given
+/// name, sv_date = build date + 365 days. Existing rows are left untouched so a
+/// user-issued auth code is never overwritten.
+pub fn ensure_preset(build_date: &str, reg_to: &str) {
+    if load_cfg0().is_some() {
+        return;
+    }
+    let bd = build_date.get(..10).unwrap_or(build_date);
+    let sv = match chrono::NaiveDate::parse_from_str(bd, "%Y-%m-%d") {
+        Ok(d) => d
+            .checked_add_signed(chrono::Duration::days(365))
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| bd.to_string()),
+        Err(_) => bd.to_string(),
+    };
+    let ov = CfgOverrides {
+        reg_to: Some(reg_to.to_owned()),
+        reg_date: Some(bd.to_string()),
+        sv_date: Some(sv),
+        ..Default::default()
+    };
+    let _ = upsert_cfg0(&ov);
 }
