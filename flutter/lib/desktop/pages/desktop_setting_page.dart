@@ -2528,6 +2528,8 @@ class _AboutState extends State<_About> {
       final buildDate = data['buildDate'].toString();
       final fingerprint = data['fingerprint'].toString();
       final myId = data['myId'].toString();
+      final _regTo = bind.mainGetOptionSync(key: 'license_reg_to');
+      final _svDate = bind.mainGetOptionSync(key: 'license_sv_date');
       const linkStyle = TextStyle(decoration: TextDecoration.underline);
       final scrollController = ScrollController();
       return SingleChildScrollView(
@@ -2542,6 +2544,14 @@ class _AboutState extends State<_About> {
               SelectionArea(
                   child: Text('${translate('Version')}: $version')
                       .marginSymmetric(vertical: 4.0)),
+              if (_regTo.isNotEmpty)
+                SelectionArea(
+                    child: Text('授权：$_regTo;服务期至：$_svDate')
+                        .marginSymmetric(vertical: 4.0))
+              else
+                SelectionArea(
+                    child: Text('服务期至：$_svDate')
+                        .marginSymmetric(vertical: 4.0)),
               SelectionArea(
                   child: Text('${translate('Build Date')}: $buildDate')
                       .marginSymmetric(vertical: 4.0)),

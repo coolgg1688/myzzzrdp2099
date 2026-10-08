@@ -415,31 +415,46 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   // Z远程协助: 一次性密码下方「查看本机配置」链接。点击后调用本机采集(无需认证)，
   // 打开 configInfo 子窗口并广播本机 JSON，复用与远程「查看配置信息」一致的展示链路。
   Widget _buildLocalConfigLink(BuildContext context) {
+    final regTo = bind.mainGetOptionSync(key: 'license_reg_to');
     return Align(
       alignment: Alignment.centerLeft,
       child: Padding(
         padding: const EdgeInsets.only(left: 27, top: 5, bottom: 2),
-        child: GestureDetector(
-          onTap: () => _showLocalConfig(),
-          child: Tooltip(
-            message: '查看本机配置',
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.memory, size: 16, color: MyTheme.accent),
-                const SizedBox(width: 5),
-                Text(
-                  '查看本机配置',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: MyTheme.accent,
-                    decoration: TextDecoration.underline,
-                    decorationColor: MyTheme.accent,
-                  ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: () => _showLocalConfig(),
+              child: Tooltip(
+                message: '查看本机配置',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.memory, size: 16, color: MyTheme.accent),
+                    const SizedBox(width: 5),
+                    Text(
+                      '查看本机配置',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: MyTheme.accent,
+                        decoration: TextDecoration.underline,
+                        decorationColor: MyTheme.accent,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
-          ),
+            if (regTo.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Text(
+                  '授权：$regTo',
+                  style: TextStyle(fontSize: 12, color: MyTheme.accent),
+                ),
+              ),
+          ],
         ),
       ),
     );
