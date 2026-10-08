@@ -462,26 +462,21 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   Future<void> _showLocalConfig() async {
     try {
-      // Z远程协助: 后台 isolate 采集(win 采集含注册表/服务/磁盘/网速/公网IP，同步 FFI 会阻塞 UI)。
+      // Z远程协助: 先弹窗(占位 local=true, 不带 text)，再后台采集并广播，避免
+      // await 采集在 rust 侧卡住时 newConfigInfo 永不执行 → 「无法弹层显示」。
       showToast('正在获取本机配置...');
-      final json = await platformFFI.getLocalConfigInfoAsync();
-      if (json.isEmpty) {
-        showToast('暂不支持');
-        return;
-      }
       final myId = gFFI.serverModel.serverId.text.trim();
-      // Z远程协助: 本机数据随窗口参数直达子窗口(不走广播竞态)，避免白屏一直转圈。
-      await rustDeskWinManager.newConfigInfo(
-          myId.isEmpty ? '本机' : myId,
-          waitForData: true,
-          localData: {
-            'type': 'zremote66-config-info',
-            'text': json,
-            'local': true,
-          });
-      // 兜底: 若子窗口因极早期竞态未收到参数数据，此广播补一发，不影响主流程。
-      await rustDeskWinManager.forwardToConfigInfoWindows(
-          {'type': 'zremote66-config-info', 'text': json, 'local': true});
+      final id = myId.isEmpty ? '本机' : myId;
+      await rustDeskWinManager.newConfigInfo(id, waitForData: true, localData: {
+        'type': 'zremote66-config-info',
+        'local': true,
+      });
+      final json = await platformFFI.getLocalConfigInfoAsync();
+      if (json.isNotEmpty) {
+        // 兜底: 若子窗口因极早期竞态未收到数据，此广播补一发，不影响主流程。
+        await rustDeskWinManager.forwardToConfigInfoWindows(
+            {'type': 'zremote66-config-info', 'text': json, 'local': true});
+      }
     } catch (e) {
       debugPrint('查看本机配置失败: $e');
       showToast('查看本机配置失败');
