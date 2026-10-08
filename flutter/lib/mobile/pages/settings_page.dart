@@ -293,8 +293,11 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     showDialog(
       context: context,
       builder: (ctx) {
-        final sw = MediaQuery.sizeOf(ctx).width * 0.7;
-        final sh = MediaQuery.sizeOf(ctx).height * 0.7;
+        // Z远程协助: 弹窗相对整个父窗口计算，最小 800x500（不超过父窗口）。
+        final pw = MediaQuery.sizeOf(ctx).width;
+        final ph = MediaQuery.sizeOf(ctx).height;
+        final sw = (pw * 0.7 < 800) ? (800 < pw ? 800.0 : pw) : pw * 0.7;
+        final sh = (ph * 0.7 < 500) ? (500 < ph ? 500.0 : ph) : ph * 0.7;
         return Center(
           child: SizedBox(
             width: sw,

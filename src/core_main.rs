@@ -171,7 +171,7 @@ pub fn core_main() -> Option<Vec<String>> {
     // Portable sqlite cfg0 override + audit "boot" (silently skipped if db missing/unreadable).
     // Seed a preset license on first launch (no cfg0 row yet); never overwrites an existing one.
     #[cfg(not(target_arch = "wasm32"))]
-    hbb_common::db_cfg::ensure_preset(crate::BUILD_DATE, "z远程测试用户");
+    hbb_common::db_cfg::ensure_preset(crate::BUILD_DATE, "zhx用户专用");
     #[cfg(not(target_arch = "wasm32"))]
     hbb_common::config::Config::init_db_cfg();
     // Service-expiry check (sv_date default = build date + 30 days). Injects
