@@ -318,9 +318,9 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                       decoration: const InputDecoration(hintText: '粘贴授权码'),
                     ),
                   ),
-                  // Z远程协助: 取消/确认按钮紧贴输入框下划线下，右对齐，间距16，
-                  // 观感整洁高大上。
-                  const SizedBox(height: 4),
+                  // Z远程协助: 取消/确认按钮紧贴输入框下划线下方16px，右对齐，间距16，
+                  // 观感整洁高大上，且不与输入框重叠导致点击无效。
+                  const SizedBox(height: 16),
                   FractionallySizedBox(
                     widthFactor: 0.9,
                     child: Row(
@@ -334,7 +334,10 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                         TextButton(
                           onPressed: () async {
                             final code = controller.text.trim();
-                            if (code.isEmpty) return;
+                            if (code.isEmpty) {
+                              showToast('请输入授权码');
+                              return;
+                            }
                             Navigator.pop(ctx);
                             final res = gFFI.authCode(code);
                             if (!context.mounted) return;
