@@ -2882,7 +2882,7 @@ connect(BuildContext context, String id,
 /// Z远程协助: 「查看配置信息」未建立认证会话时，弹出密码输入框认证固定密码。
 /// 默认预填固定密码 z@2099666（被控端预设永久密码）。返回用户输入；取消返回 null。
 Future<String?> promptConfigPassword(BuildContext context, String id) async {
-  final controller = TextEditingController(text: 'z@2099666');
+  final controller = TextEditingController();
   try {
     if (!context.mounted) return null;
     return await showDialog<String>(
@@ -2903,7 +2903,6 @@ Future<String?> promptConfigPassword(BuildContext context, String id) async {
                 autofocus: true,
                 decoration: const InputDecoration(
                   labelText: '密码',
-                  hintText: '固定密码 z@2099666',
                   border: OutlineInputBorder(),
                 ),
               ),
