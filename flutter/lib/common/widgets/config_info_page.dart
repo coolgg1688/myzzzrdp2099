@@ -357,10 +357,13 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
   }
 
   // Z远程协助: 用新密码重新发起配置信息连接。先释放旧会话再 start。
+  // 注意: gFFI.close() 是异步(内部 await bind.sessionClose)，必须 await，
+  // 否则旧会话未真正关闭就 start 重建同一 sessionId，rust 端会话冲突导致连接
+  // 建立失败、前端一直转圈(修复"重输密码后一直加载")。
   Future<void> _retryWithPassword(String pw) async {
     if (!mounted) return;
     try {
-      gFFI.close();
+      await gFFI.close();
     } catch (_) {}
     ConfigInfoController.instance.reset();
     gFFI.ffiModel.updateEventListener(gFFI.sessionId, widget.id);
