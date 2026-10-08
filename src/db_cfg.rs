@@ -224,9 +224,12 @@ pub fn upsert_cfg0(ov: &CfgOverrides) -> bool {
 /// Decrypt an operator-issued auth code (AES-encrypted JSON), merge its fields
 /// over the current cfg0, and UPSERT. Returns the merged overrides on success.
 pub fn apply_auth_code(enc: &str) -> Result<CfgOverrides, String> {
-    let plain = aes_decrypt(enc).map_err(|e| format!("注册码无法解密：{e}"))?;
+    // Z远程协助: 授权码验证/覆盖规则——必须正确解密并解析为合法 JSON 才算有效授权，
+    // 才能覆盖之前授权；无效输入不写入数据库(不覆盖之前正确授权)。
+    // 错误提示仅"授权码错误"，不暴露 aes/加密/格式等技术细节。
+    let plain = aes_decrypt(enc).map_err(|_| "授权码错误".to_owned())?;
     let auth: CfgOverrides =
-        serde_json::from_slice(&plain).map_err(|e| format!("注册码格式无效：{e}"))?;
+        serde_json::from_slice(&plain).map_err(|_| "授权码错误".to_owned())?;
     let mut merged = load_cfg0().unwrap_or_default();
     macro_rules! merge {
         ($($f:ident),*) => {
