@@ -75,10 +75,33 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         block: _block, mask: true, use: canBeBlocked, child: child);
   }
 
+  // Z远程协助: 服务期超期横幅（读 cfg0 service_expiry，非空即显示）。
+  Widget _buildServiceExpiryBanner() {
+    final msg = bind.mainGetOptionSync(key: 'service_expiry');
+    if (msg.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFEBEE),
+        border: Border.all(color: const Color(0xFFE57373)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        msg,
+        style: const TextStyle(color: Color(0xFFB71C1C), fontSize: 11),
+      ),
+    );
+  }
+
   Widget buildLeftPane(BuildContext context) {
     final isIncomingOnly = bind.isIncomingOnly();
     final isOutgoingOnly = bind.isOutgoingOnly();
     final children = <Widget>[
+      if (!isOutgoingOnly) _buildServiceExpiryBanner(),
       if (!isOutgoingOnly) buildPresetPasswordWarning(),
       if (bind.isCustomClient())
         Align(
