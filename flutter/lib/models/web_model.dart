@@ -79,6 +79,9 @@ class PlatformFFI {
   // Z远程协助: web 端不支持 FFI 机器信息采集，同步版 async 接口，保证与 desktop 兼容。
   Future<String> getLocalConfigInfoAsync() async => '';
 
+  // Z远程协助: web 端无原生 rdc_auth_code FFI，返回不支持(FFI.authCode 委托调用)。
+  String authCode(String code) => '授权失败：当前平台不支持';
+
   static Future<String> getVersion() async {
     throw UnimplementedError();
   }

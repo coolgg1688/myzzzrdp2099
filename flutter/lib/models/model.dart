@@ -4191,6 +4191,10 @@ class FFI {
         name: PeersModelName.lan, loadEvent: LoadEvent.lan, getInitPeers: null);
   }
 
+  /// Z远程协助: 输入授权码(加密后的注册码)→rust 解密+UPSERT cfg0+刷新授权选项，
+  /// 返回结果字符串(成功为「授权：…；服务期至：…」，失败以「授权失败：」开头)。
+  String authCode(String code) => platformFFI.authCode(code);
+
   /// Mobile reuse FFI
   void mobileReset() {
     ffiModel.resetRestartReconnectState();
