@@ -2574,6 +2574,30 @@ connectMainDesktop(String id,
     String? password,
     String? connToken,
     bool? isSharedPassword}) async {
+  // Z远程协助: 主控端发起「控制他机」的统一闸口——服务期超期则弹窗提示；
+  // 受控端被连接不经过本函数，故不会提示。
+  final expiry = bind.mainGetOptionSync(key: 'service_expiry');
+  if (expiry.isNotEmpty) {
+    final ctx = globalKey.currentContext;
+    if (ctx != null && ctx.mounted) {
+      final go = await showDialog<bool>(
+        context: ctx,
+        builder: (ctx) => AlertDialog(
+          title: const Text('服务已超期'),
+          content: Text(expiry),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('仍要连接')),
+          ],
+        ),
+      );
+      if (go != true) return;
+    }
+  }
   if (isFileTransfer) {
     await rustDeskWinManager.newFileTransfer(id,
         password: password,
@@ -2643,6 +2667,30 @@ connect(BuildContext context, String id,
     } catch (_) {}
   }
   id = id.replaceAll(' ', '');
+  // Z远程协助: 仅主控端发起「控制他机」时才判断服务期超期并弹窗提示；受控端不提示。
+  // 桌面端在 connectMainDesktop 统一检查(所有桌面入口汇聚)；这里只覆盖移动/web 端连接。
+  if (!isDesktop) {
+    final expiry = bind.mainGetOptionSync(key: 'service_expiry');
+    if (expiry.isNotEmpty) {
+      if (!context.mounted) return;
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('服务已超期'),
+          content: Text(expiry),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('仍要连接')),
+          ],
+        ),
+      );
+      if (go != true) return;
+    }
+  }
   final oldId = id;
   id = await bind.mainHandleRelayId(id: id);
   forceRelay = id != oldId || forceRelay;

@@ -101,7 +101,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final isIncomingOnly = bind.isIncomingOnly();
     final isOutgoingOnly = bind.isOutgoingOnly();
     final children = <Widget>[
-      if (!isOutgoingOnly) _buildServiceExpiryBanner(),
+      // Z远程协助: 服务期超期提示已移至「主控端发起连接他机时」弹窗判断(connect())，
+      // 受控端/启动时不再常显横幅。
       if (!isOutgoingOnly) buildPresetPasswordWarning(),
       if (bind.isCustomClient())
         Align(
