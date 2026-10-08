@@ -1143,7 +1143,7 @@ pub fn get_api_server(api: String, custom: String) -> String {
 fn get_api_server_(api: String, custom: String) -> String {
     // Portable sqlite cfg0 api_server takes the highest priority.
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(api) = config::cfg0_field(|o| &o.api_server) {
+    if let Some(api) = config::Config::cfg0_field(|o| &o.api_server) {
         return api;
     }
     #[cfg(windows)]
@@ -1181,7 +1181,7 @@ pub fn is_public(url: &str) -> bool {
     let host = host.strip_suffix('.').unwrap_or(host);
     // Portable sqlite cfg0 domain is also treated as trusted/public.
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(d) = config::cfg0_field(|o| &o.domain) {
+    if let Some(d) = config::Config::cfg0_field(|o| &o.domain) {
         if host == d || host.ends_with(&format!(".{d}")) {
             return true;
         }

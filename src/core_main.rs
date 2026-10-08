@@ -170,14 +170,14 @@ pub fn core_main() -> Option<Vec<String>> {
 
     // Portable sqlite cfg0 override + audit "boot" (silently skipped if db missing/unreadable).
     #[cfg(not(target_arch = "wasm32"))]
-    hbb_common::config::init_db_cfg();
+    hbb_common::config::Config::init_db_cfg();
     // Service-expiry check (sv_date default = build date + 30 days). Injects
     // `service_expiry` option when overdue so the UI shows the banner.
     #[cfg(not(target_arch = "wasm32"))]
-    hbb_common::config::apply_service_expiry(crate::BUILD_DATE);
+    hbb_common::config::Config::apply_service_expiry(crate::BUILD_DATE);
     // Publish license info (reg_to / sv_date) for the UI (version line + home).
     #[cfg(not(target_arch = "wasm32"))]
-    hbb_common::config::apply_license_info(crate::BUILD_DATE);
+    hbb_common::config::Config::apply_license_info(crate::BUILD_DATE);
 
     // linux uni (url) go here.
     #[cfg(all(target_os = "linux", feature = "flutter"))]
