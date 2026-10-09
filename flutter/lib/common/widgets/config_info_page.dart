@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart'
@@ -267,6 +268,9 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
   String get _windowTitle => _isLocalConfig ? '本机配置' : '被控端配置信息';
   // Z远程协助: 防抖——避免同一密码错误在弹框关闭/重建时重复触发重输框。
   bool _pwDialogShown = false;
+  // Z远程协助: 连接获取超时器——发起连接后 30s 内既无数据也无错误回调时，
+  // 自动停止转圈并显示可关闭的错误提示，避免"连接不上/获取不到数据"时白屏且无法关闭。
+  Timer? _fetchTimeout;
 
   @override
   void initState() {
@@ -287,14 +291,28 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
         isSharedPassword: widget.isSharedPassword,
         forceRelay: widget.forceRelay,
       );
+      _armFetchTimeout();
     }
     // Z远程协助: 删除全屏模态 showLoading——它会盖住自绘标题栏关闭按钮，
     // 连接卡住（密码验证/离线重试）时用户点不到关闭、窗口关不掉。
     // loading 状态由 build 里的 Consumer(c.loading) 展示，窗口任何时刻可交互。
   }
 
+  // Z远程协助: 30s 无结果即超时置错(仍可关闭)。waitForData/本机配置无独立连接，不设超时。
+  void _armFetchTimeout() {
+    _fetchTimeout?.cancel();
+    _fetchTimeout = Timer(const Duration(seconds: 30), () {
+      if (!mounted) return;
+      final c = ConfigInfoController.instance;
+      if (c.loading && !c.passwordError) {
+        c.onConnectionError(null, '获取配置信息超时，请确认被控端在线且密码正确');
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _fetchTimeout?.cancel();
     ConfigInfoController.instance.removeListener(_onConfigControllerChanged);
     // Z远程协助: 非复用模式下本页自己发起了会话，释放之；复用模式下会话属于主窗口
     // isolate，本页只读复用，不能 close。
@@ -375,6 +393,7 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
       await gFFI.close();
     } catch (_) {}
     ConfigInfoController.instance.reset();
+    _armFetchTimeout();
     gFFI.ffiModel.updateEventListener(gFFI.sessionId, widget.id);
     gFFI.start(
       widget.id,
@@ -468,30 +487,62 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
           : AppBar(
               title: Text(_windowTitle),
             ),
-      body: ChangeNotifierProvider.value(
-        value: ConfigInfoController.instance,
-        child: Consumer<ConfigInfoController>(
-          builder: (context, c, _) {
-            if (c.loading) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (c.error != null) {
-              return Center(child: Text(c.error!));
-            }
-            return _buildTabs(context, c.data!, customTitleBar);
-          },
-        ),
+      // Z远程协助: 自绘标题栏(含关闭按钮)常驻在最外层，loading/error/data 任何
+      // 状态下都渲染，确保连接不上/获取不到数据时弹层仍可正常关闭(不再白屏无法关)。
+      body: Column(
+        children: [
+          if (customTitleBar) _buildCustomTitleBar(),
+          Expanded(
+            child: ChangeNotifierProvider.value(
+              value: ConfigInfoController.instance,
+              child: Consumer<ConfigInfoController>(
+                builder: (context, c, _) {
+                  if (c.loading) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (c.error != null) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.error_outline,
+                              color: Colors.redAccent, size: 40),
+                          const SizedBox(height: 12),
+                          Padding(
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 24),
+                            child: Text(
+                              c.error!,
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          OutlinedButton(
+                            onPressed: _onCloseDesktopWindow,
+                            child: const Text('关闭'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                  if (c.data == null) {
+                    return const Center(child: Text('暂无数据'));
+                  }
+                  return _buildTabs(context, c.data!);
+                },
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildTabs(
-      BuildContext context, Map<String, dynamic> data, bool customTitleBar) {
+  Widget _buildTabs(BuildContext context, Map<String, dynamic> data) {
     return DefaultTabController(
       length: 4,
       child: Column(
         children: [
-          if (customTitleBar) _buildCustomTitleBar(),
           const TabBar(
             labelColor: Colors.blue,
             tabs: [
