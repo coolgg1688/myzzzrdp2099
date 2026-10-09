@@ -803,7 +803,8 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
           final dFree = _toGb(d['free_gb']);
           final head = <String>[];
           if (dName.isNotEmpty) head.add(dName);
-          if (dModel.isNotEmpty) head.add('型号:$dModel');
+          // Z远程协助: 括号内仅保留型号值，去掉「型号:」前缀。
+          if (dModel.isNotEmpty) head.add(dModel);
           final headStr = head.length > 1 ? '${head[0]} (${head[1]})' : head.join();
           final segs = <String>[];
           if (headStr.isNotEmpty) segs.add(headStr);
