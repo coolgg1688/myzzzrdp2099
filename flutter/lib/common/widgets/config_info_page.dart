@@ -244,6 +244,10 @@ class ConfigInfoPage extends StatefulWidget {
   // Z远程协助: 子窗口原始参数 map。本机「查看本机配置」用它读取 local/text
   // 直达本机 JSON，随窗口参数立即渲染，避免广播竞态导致的白屏/一直转圈。
   final Map<String, dynamic>? params;
+  // Z远程协助: 主窗口内模态层模式(桌面端改用主窗口全屏 Dialog 展示)。关闭走
+  // Navigator.pop(纯本地、任何情况都能关)，数据/密码错误/连接错误都在主 isolate
+  // 闭环，不依赖跨窗口 channel——根治"密码输错/连接问题子窗口关不掉卡死"。
+  final bool dialogMode;
 
   const ConfigInfoPage({
     Key? key,
@@ -253,6 +257,7 @@ class ConfigInfoPage extends StatefulWidget {
     this.forceRelay,
     this.waitForData = false,
     this.params,
+    this.dialogMode = false,
   }) : super(key: key);
 
   @override
@@ -260,9 +265,9 @@ class ConfigInfoPage extends StatefulWidget {
 }
 
 class _ConfigInfoPageState extends State<ConfigInfoPage> {
-  // Z远程协助: 桌面子窗口（非 macOS，macOS 有原生标题栏）使用自绘 42px
+  // Z远程协助: dialogMode(主窗口模态层)或桌面子窗口(非 macOS)使用自绘 42px
   // 标题栏 + 关闭按钮；移动端/其它情况保留默认 AppBar。
-  bool get _useCustomTitleBar => isDesktop && !isMacOS;
+  bool get _useCustomTitleBar => widget.dialogMode || (isDesktop && !isMacOS);
   // Z远程协助: 本机「查看本机配置」标题用「本机配置」，远程用「被控端配置信息」。
   bool get _isLocalConfig => widget.params?['local'] == true;
   String get _windowTitle => _isLocalConfig ? '本机配置' : '被控端配置信息';
@@ -433,6 +438,12 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
     }
   }
 
+  // Z远程协助: 主窗口模态层关闭——纯本地 Navigator.pop，任何状态(loading/error/data)
+  // 都能立即关闭，不依赖任何跨窗口 channel。会话释放由 dispose() 统一处理。
+  void _onCloseDialogMode() {
+    if (mounted) Navigator.of(context).pop();
+  }
+
   // Z远程协助: 关闭按钮逻辑健壮化——任一步失败都不阻断后续步骤，保证窗口最终能关掉；
   // kWindowId 为 null 时降级直接释放本页会话。
   Future<void> _onCloseDesktopWindow() async {
@@ -470,7 +481,8 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
           IconButton(
             icon: const Icon(Icons.close, size: 18, color: Colors.white),
             tooltip: '关闭',
-            onPressed: _onCloseDesktopWindow,
+            onPressed:
+                widget.dialogMode ? _onCloseDialogMode : _onCloseDesktopWindow,
           ),
           const SizedBox(width: 4),
         ],
@@ -518,7 +530,9 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
                           ),
                           const SizedBox(height: 16),
                           OutlinedButton(
-                            onPressed: _onCloseDesktopWindow,
+                            onPressed: widget.dialogMode
+                                ? _onCloseDialogMode
+                                : _onCloseDesktopWindow,
                             child: const Text('关闭'),
                           ),
                         ],

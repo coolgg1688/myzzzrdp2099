@@ -2636,6 +2636,37 @@ connectMainDesktop(String id,
   }
 }
 
+/// Z远程协助: 桌面端「查看配置信息」改为主窗口内全屏模态层（dialogMode）。
+/// 关闭走 Navigator.pop(纯本地、任何情况都能关)，数据/密码错误/连接错误都在主
+/// isolate 闭环，不再依赖跨窗口 channel——根治"密码输错/连接问题子窗口关不掉卡死"。
+Future<void> openConfigInfoDialog(
+  BuildContext context,
+  String id, {
+  String? password,
+  bool? isSharedPassword,
+  bool forceRelay = false,
+  bool waitForData = false,
+  Map<String, dynamic>? localData,
+}) async {
+  if (!context.mounted) return;
+  await showGeneralDialog<void>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: '配置信息',
+    barrierColor: Colors.black45,
+    transitionDuration: const Duration(milliseconds: 180),
+    pageBuilder: (ctx, _, __) => ConfigInfoPage(
+      id: id,
+      password: password,
+      isSharedPassword: isSharedPassword,
+      forceRelay: forceRelay,
+      waitForData: waitForData,
+      params: localData,
+      dialogMode: true,
+    ),
+  );
+}
+
 /// Connect to a peer with [id].
 /// If [isFileTransfer], starts a session only for file transfer.
 /// If [isViewCamera], starts a session only for view camera.
@@ -2699,13 +2730,13 @@ connect(BuildContext context, String id,
   if (isDesktop) {
     if (desktopType == DesktopType.main) {
       // Z远程协助: 主控端已通过密码验证且已与该 peer 建立连接时，打开「查看配置信息」
-      // 不再二次验证——复用已有会话：开 waitForData 子窗口（不发起新 LoginRequest），
+      // 不再二次验证——复用已有会话：开 waitForData 模态层（不发起新 LoginRequest），
       // 再通过该已认证会话要求被控端上报配置。
       var effectivePassword = password;
       if (isConfigInfo) {
         final reuseSid = await bind.mainGetEstablishedSession(peerId: id);
         if (reuseSid.isNotEmpty) {
-          await rustDeskWinManager.newConfigInfo(id, waitForData: true);
+          await openConfigInfoDialog(context, id, waitForData: true);
           // Z远程协助: uuid 3.x 的 UuidValue 是 factory UuidValue(String)（非 fromString）。
           await bind.sessionSendConfigOp(
               sessionId: UuidValue(reuseSid),
@@ -2719,6 +2750,12 @@ connect(BuildContext context, String id,
           if (pw == null) return;
           effectivePassword = pw;
         }
+        // Z远程协助: 主窗口模态层展示(关闭=N路pop，任何情况可关)；不创建子窗口。
+        await openConfigInfoDialog(context, id,
+            password: effectivePassword,
+            isSharedPassword: isSharedPassword,
+            forceRelay: forceRelay);
+        return;
       }
       await connectMainDesktop(
         id,
