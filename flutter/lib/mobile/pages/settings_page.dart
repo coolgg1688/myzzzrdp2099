@@ -285,87 +285,85 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   }
 
   /// Z远程协助: 「输入授权」弹层——输入加密后的注册码，调 native FFI 解密+写库+刷新授权。
-  /// 弹窗为父窗口宽高的 70% 并居中，输入框占弹窗宽度的 90%。移动端 get_option 直读
-  /// CONFIG2.options，确认授权后 setState 即可实时刷新(无需重启进程)。
-  /// 注意: 不能用裸 `Dialog`(与 common.dart 自定义 Dialog<T> 冲突, 导致 web 编译失败), 改用 AlertDialog。
+  /// 标准 AlertDialog：内容用 SingleChildScrollView 防键盘遮挡，取消/确认按钮放系统
+  /// actions 区(随键盘自动上移、永不遮挡)，确认用大号 FilledButton 确保点击必命中。
+  /// 移动端 get_option 直读 CONFIG2.options，确认授权后 setState 即可实时刷新(无需重启进程)。
+  /// 注意: 不能用裸 `Dialog`(与 common.dart 自定义 Dialog<T> 冲突, 导致 web 编译失败), 用 AlertDialog。
   void _showAuthInput(BuildContext context) {
     final controller = TextEditingController();
     showDialog(
       context: context,
-      builder: (ctx) {
-        // Z远程协助: 弹窗相对整个父窗口计算，最小 800x500（不超过父窗口）。
-        final pw = MediaQuery.sizeOf(ctx).width;
-        final ph = MediaQuery.sizeOf(ctx).height;
-        final sw = (pw * 0.7 < 800) ? (800 < pw ? 800.0 : pw) : pw * 0.7;
-        final sh = (ph * 0.7 < 500) ? (500 < ph ? 500.0 : ph) : ph * 0.7;
-        return Center(
-          child: SizedBox(
-            width: sw,
-            height: sh,
-            child: AlertDialog(
-              title: const Text('输入授权'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Z远程协助: 输入框占弹窗宽度 90%。
-                  FractionallySizedBox(
-                    widthFactor: 0.9,
-                    child: TextField(
-                      controller: controller,
-                      maxLines: 4,
-                      autofocus: true,
-                      decoration: const InputDecoration(hintText: '粘贴授权码'),
-                    ),
-                  ),
-                  // Z远程协助: 取消/确认按钮紧贴输入框下划线下方16px，右对齐，间距16，
-                  // 观感整洁高大上，且不与输入框重叠导致点击无效。
-                  const SizedBox(height: 16),
-                  FractionallySizedBox(
-                    widthFactor: 0.9,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('取消'),
-                        ),
-                        const SizedBox(width: 16),
-                        TextButton(
-                          onPressed: () {
-                            final code = controller.text.trim();
-                            if (code.isEmpty) {
-                              showToast('请输入授权码');
-                              return;
-                            }
-                            // Z远程协助: 先验证再关窗——任何异常/失败都 toast 并留在弹窗可重输，
-                            // 成功才 pop。避免"先 pop + 外部 context.mounted 提前 return +
-                            // 同步 FFI 抛异常被吞"导致的点确认无反馈。
-                            String res;
-                            try {
-                              res = gFFI.authCode(code);
-                            } catch (e) {
-                              res = '授权失败：$e';
-                            }
-                            if (res.contains('授权失败')) {
-                              showToast(res);
-                              return; // 保持弹窗，可重新输入
-                            }
-                            showToast('授权成功：$res');
-                            Navigator.pop(ctx);
-                            if (context.mounted) setState(() {});
-                          },
-                          child: const Text('确认'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+      builder: (ctx) => AlertDialog(
+        title: const Text('输入授权'),
+        contentPadding:
+            const EdgeInsets.fromLTRB(20, 12, 20, 0),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '请粘贴加密后的授权码：',
+                style: TextStyle(fontSize: 14, color: Colors.black54),
               ),
-            ),
+              const SizedBox(height: 10),
+              FractionallySizedBox(
+                widthFactor: 1,
+                child: TextField(
+                  controller: controller,
+                  maxLines: 4,
+                  minLines: 2,
+                  autofocus: true,
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
+                  decoration: const InputDecoration(
+                    hintText: '粘贴授权码',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+            ],
           ),
-        );
-      },
+        ),
+        actionsPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          const SizedBox(width: 4),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(96, 44),
+            ),
+            onPressed: () {
+              final code = controller.text.trim();
+              if (code.isEmpty) {
+                showToast('请输入授权码');
+                return;
+              }
+              // Z远程协助: 先验证再关窗——任何异常/失败都 toast 并留在弹窗可重输，
+              // 成功才 pop。避免"先 pop + 外部 context.mounted 提前 return +
+              // 同步 FFI 抛异常被吞"导致的点确认无反馈。
+              String res;
+              try {
+                res = gFFI.authCode(code);
+              } catch (e) {
+                res = '授权失败：$e';
+              }
+              if (res.contains('授权失败')) {
+                showToast(res);
+                return; // 保持弹窗，可重新输入
+              }
+              showToast('授权成功：$res');
+              Navigator.pop(ctx);
+              if (context.mounted) setState(() {});
+            },
+            child: const Text('确认'),
+          ),
+        ],
+      ),
     );
   }
 
