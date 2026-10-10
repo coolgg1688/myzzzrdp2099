@@ -1396,7 +1396,7 @@ impl Config {
             // Preset defaults for the customized build (service-side & UI share get_option).
             match k {
                 "allow-auto-disconnect" => return "Y".to_owned(),
-                "auto-disconnect-timeout" => return "20".to_owned(),
+                "auto-disconnect-timeout" => return "30".to_owned(),
                 _ => {}
             }
         }
