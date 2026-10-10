@@ -446,21 +446,23 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
 
   // Z远程协助: 关闭按钮逻辑健壮化——任一步失败都不阻断后续步骤，保证窗口最终能关掉；
   // kWindowId 为 null 时降级直接释放本页会话。
-  Future<void> _onCloseDesktopWindow() async {
+  // 关键修复: 不再 await saveWindowPosition(它经主窗口 channel，主窗口忙时可能挂起，
+  // 会导致 close 永远不执行 → 点关闭无效/卡死)。改为 fire-and-forget，直接发关闭。
+  void _onCloseDesktopWindow() {
     if (kWindowId == null) {
       gFFI.close();
       return;
     }
+    // 保存窗口位置 fire-and-forget，绝不阻塞关闭流程。
     try {
-      await saveWindowPosition(WindowType.ConfigInfo, windowId: kWindowId);
-    } catch (_) {
-      // 保存窗口位置失败可容忍，不影响关闭流程。
-    }
+      unawaited(saveWindowPosition(WindowType.ConfigInfo, windowId: kWindowId));
+    } catch (_) {}
+    final controller = WindowController.fromWindowId(kWindowId!);
     try {
-      await WindowController.fromWindowId(kWindowId!).setPreventClose(false);
+      unawaited(controller.setPreventClose(false));
     } catch (_) {}
     try {
-      await WindowController.fromWindowId(kWindowId!).close();
+      unawaited(controller.close());
     } catch (_) {}
   }
 
