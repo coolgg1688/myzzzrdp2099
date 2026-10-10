@@ -164,6 +164,23 @@ pub fn auth_code(code: String) -> Result<String, String> {
         hbb_common::config::Config::apply_service_expiry(crate::BUILD_DATE);
         // 同步 CONFIG2.options → OPTIONS 缓存，使前端 mainGetOptionSync 能实时读到新授权。
         refresh_options();
+        // Z远程协助: 校验授权确已落库并进入配置缓存——读回 cfg0 字段，与本次授权一致才算成功。
+        // 避免"提示授权成功但未生效"的假成功(导致反复重启/超期残留)。
+        let want_to = ov.reg_to.clone().unwrap_or_default();
+        let want_sv = ov.sv_date.clone().unwrap_or_default();
+        let got_to = hbb_common::config::Config::cfg0_field(|o| &o.reg_to)
+            .unwrap_or_default();
+        let got_sv = hbb_common::config::Config::cfg0_field(|o| &o.sv_date)
+            .unwrap_or_default();
+        if !want_to.is_empty() || !want_sv.is_empty() {
+            let ok_to = want_to.is_empty() || got_to == want_to;
+            let ws = want_sv.get(..10).unwrap_or(&want_sv);
+            let gs = got_sv.get(..10).unwrap_or(&got_sv);
+            let ok_sv = want_sv.is_empty() || gs == ws;
+            if !(ok_to && ok_sv) {
+                return Err("授权码错误".to_owned());
+            }
+        }
     }
     Ok(format!(
         "授权：{}；服务期至：{}",

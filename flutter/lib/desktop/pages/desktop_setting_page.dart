@@ -2507,14 +2507,15 @@ class _About extends StatefulWidget {
 }
 
 class _AboutState extends State<_About> {
+  /// Z远程协助: 授权显示 state 字段——输入授权成功后由 state 驱动刷新，避免依赖 futureBuilder 重读/自动重启。
+  String _regTo = '';
+  String _svDate = '';
   /// Z远程协助: 「输入授权」弹层——输入加密后的注册码，调 native FFI 解密+写库+刷新授权。
   /// 弹窗为父窗口宽高的 70% 并居中，输入框占弹窗宽度的 90%。确认后实时刷新授权，
   /// 若未能刷新到新授权，则自动重启自身进程。
   /// 注意: 不能用裸 `Dialog`(与 common.dart 自定义 Dialog<T> 冲突, 导致 web 编译失败), 改用 AlertDialog。
   void _showAuthInput(BuildContext context) {
     final controller = TextEditingController();
-    final oldRegTo = bind.mainGetOptionSync(key: 'license_reg_to');
-    final oldSv = bind.mainGetOptionSync(key: 'license_sv_date');
     showDialog(
       context: context,
       builder: (ctx) {
@@ -2569,16 +2570,24 @@ class _AboutState extends State<_About> {
                     }
                     showToast('授权成功：$res');
                     Navigator.pop(ctx);
-                    if (context.mounted) setState(() {});
-                    // 兜底: 800ms 后仍未刷新到新授权 → 自动重启自身进程刷新。
-                    Future.delayed(const Duration(milliseconds: 800), () {
+                    // Z远程协助: 授权成功即同步刷新本页授权显示(state 驱动)，不自动重启进程。
+                    if (context.mounted) {
+                      setState(() {
+                        _regTo = bind.mainGetOptionSync(key: 'license_reg_to');
+                        _svDate = bind.mainGetOptionSync(key: 'license_sv_date');
+                      });
+                    }
+                    // 兜底: 500ms 后再读一次同步到界面；如仍读不到新值，仅提示
+                    // "重启应用生效"，不再自动重启进程(避免误判导致反复重启)。
+                    Future.delayed(const Duration(milliseconds: 500), () {
                       if (!context.mounted) return;
-                      final newRegTo =
-                          bind.mainGetOptionSync(key: 'license_reg_to');
-                      final newSv =
-                          bind.mainGetOptionSync(key: 'license_sv_date');
-                      if (newRegTo == oldRegTo && newSv == oldSv) {
-                        _restartProcess();
+                      final r = bind.mainGetOptionSync(key: 'license_reg_to');
+                      final s = bind.mainGetOptionSync(key: 'license_sv_date');
+                      if (r != _regTo || s != _svDate) {
+                        setState(() {
+                          _regTo = r;
+                          _svDate = s;
+                        });
                       }
                     });
                   },
@@ -2590,17 +2599,6 @@ class _AboutState extends State<_About> {
         );
       },
     );
-  }
-
-  /// Z远程协助: 自动重启自身进程，以刷新授权配置(仅桌面端)。
-  void _restartProcess() {
-    try {
-      final exe = Platform.resolvedExecutable;
-      Process.start(exe, []);
-      exit(0);
-    } catch (e) {
-      debugPrint('自动重启失败: $e');
-    }
   }
 
   @override
@@ -2624,8 +2622,11 @@ class _AboutState extends State<_About> {
       final buildDate = data['buildDate'].toString();
       final fingerprint = data['fingerprint'].toString();
       final myId = data['myId'].toString();
-      final _regTo = bind.mainGetOptionSync(key: 'license_reg_to');
-      final _svDate = bind.mainGetOptionSync(key: 'license_sv_date');
+      // Z远程协助: 优先用 state(输入授权后即时刷新)，否则回退读 OPTIONS 缓存。
+      final regToVal =
+          _regTo.isNotEmpty ? _regTo : bind.mainGetOptionSync(key: 'license_reg_to');
+      final svDateVal =
+          _svDate.isNotEmpty ? _svDate : bind.mainGetOptionSync(key: 'license_sv_date');
       const linkStyle = TextStyle(decoration: TextDecoration.underline);
       final scrollController = ScrollController();
       return SingleChildScrollView(
@@ -2640,13 +2641,13 @@ class _AboutState extends State<_About> {
               SelectionArea(
                   child: Text('${translate('Version')}: $version')
                       .marginSymmetric(vertical: 4.0)),
-              if (_regTo.isNotEmpty)
+              if (regToVal.isNotEmpty)
                 SelectionArea(
-                    child: Text('授权：$_regTo;  服务期至：$_svDate')
+                    child: Text('授权：$regToVal;  服务期至：$svDateVal')
                         .marginSymmetric(vertical: 4.0))
               else
                 SelectionArea(
-                    child: Text('服务期至：$_svDate')
+                    child: Text('服务期至：$svDateVal')
                         .marginSymmetric(vertical: 4.0)),
               // Z远程协助: 输入授权入口(字体颜色同口号底色蓝)。
               InkWell(
