@@ -2723,6 +2723,11 @@ connect(BuildContext context, String id,
         // (独立 isolate)，配置会话与主窗口完全隔离，主窗体不受任何影响。
         await connectMainDesktop(
           id,
+          isFileTransfer: false,
+          isViewCamera: false,
+          isTerminal: false,
+          isTcpTunneling: false,
+          isRDP: false,
           isConfigInfo: true,
           password: effectivePassword,
           isSharedPassword: isSharedPassword,
