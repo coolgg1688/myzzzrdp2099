@@ -784,7 +784,8 @@ mod win {
 
     // 收集有可见主窗口的 PID 集合（参照任务管理器"应用"）。
     fn visible_window_pids() -> HashSet<u32> {
-        use winapi::shared::windef::{HWND, LPARAM};
+        use winapi::shared::minwindef::LPARAM;
+        use winapi::shared::windef::HWND;
         use winapi::um::winuser::{
             EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible,
         };
@@ -832,40 +833,65 @@ mod win {
 
     // ---- Listening ports via GetExtendedTcpTable / GetExtendedUdpTable ------
     // 输出 [{port, proto, process, path}]。TCP 只采 LISTEN 状态；UDP 全采。
+    // winapi 0.3.9 只提供 GetExtendedTcp/UdpTable 函数，未提供 OWNER_PID 表结构与常量，
+    // 此处按 Windows SDK 布局自行定义（与 MIB_TCPTABLE_OWNER_PID 等完全一致）。
     pub fn ports() -> Value {
-        use winapi::shared::iphlpapi::{TCP_TABLE_OWNER_PID_LISTENER, UDP_TABLE_OWNER_PID};
         use winapi::shared::minwindef::FALSE;
-        use winapi::shared::ntdef::NO_ERROR;
         use winapi::shared::ws2def::AF_INET;
-        use winapi::um::iphlpapi::{
-            GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP_STATE_LISTEN,
-            MIB_TCPTABLE_OWNER_PID, MIB_UDPTABLE_OWNER_PID,
-        };
+        use winapi::um::iphlpapi::{GetExtendedTcpTable, GetExtendedUdpTable};
+        #[repr(C)]
+        struct MibTcpRowOwnerPid {
+            dwState: u32,
+            dwLocalAddr: u32,
+            dwLocalPort: u32,
+            dwRemoteAddr: u32,
+            dwRemotePort: u32,
+            dwOwningPid: u32,
+        }
+        #[repr(C)]
+        struct MibTcpTableOwnerPid {
+            dwNumEntries: u32,
+            table: [MibTcpRowOwnerPid; 1],
+        }
+        #[repr(C)]
+        struct MibUdpRowOwnerPid {
+            dwLocalAddr: u32,
+            dwLocalPort: u32,
+            dwOwningPid: u32,
+        }
+        #[repr(C)]
+        struct MibUdpTableOwnerPid {
+            dwNumEntries: u32,
+            table: [MibUdpRowOwnerPid; 1],
+        }
+        const TCP_TABLE_OWNER_PID_LISTENER: u32 = 3;
+        const UDP_TABLE_OWNER_PID: u32 = 1;
+        const MIB_TCP_STATE_LISTEN: u32 = 2;
         let proc_map = proc_map();
         let mut out: Vec<Value> = Vec::new();
-        // TCP LISTEN (MIB_TCP_STATE_LISTEN == 2)
+        // TCP LISTEN
         unsafe {
             let mut size: u32 = 0;
             let r1 = GetExtendedTcpTable(
                 std::ptr::null_mut(),
                 &mut size,
                 FALSE,
-                AF_INET,
+                AF_INET as u32,
                 TCP_TABLE_OWNER_PID_LISTENER,
                 0,
             );
-            if r1 == NO_ERROR && size > 0 {
+            if r1 == 0 && size > 0 {
                 let mut buf = vec![0u8; size as usize];
                 let r2 = GetExtendedTcpTable(
                     buf.as_mut_ptr() as *mut _,
                     &mut size,
                     FALSE,
-                    AF_INET,
+                    AF_INET as u32,
                     TCP_TABLE_OWNER_PID_LISTENER,
                     0,
                 );
-                if r2 == NO_ERROR {
-                    let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
+                if r2 == 0 {
+                    let table = &*(buf.as_ptr() as *const MibTcpTableOwnerPid);
                     let rows =
                         std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
                     for row in rows {
@@ -897,22 +923,22 @@ mod win {
                 std::ptr::null_mut(),
                 &mut size,
                 FALSE,
-                AF_INET,
+                AF_INET as u32,
                 UDP_TABLE_OWNER_PID,
                 0,
             );
-            if r1 == NO_ERROR && size > 0 {
+            if r1 == 0 && size > 0 {
                 let mut buf = vec![0u8; size as usize];
                 let r2 = GetExtendedUdpTable(
                     buf.as_mut_ptr() as *mut _,
                     &mut size,
                     FALSE,
-                    AF_INET,
+                    AF_INET as u32,
                     UDP_TABLE_OWNER_PID,
                     0,
                 );
-                if r2 == NO_ERROR {
-                    let table = &*(buf.as_ptr() as *const MIB_UDPTABLE_OWNER_PID);
+                if r2 == 0 {
+                    let table = &*(buf.as_ptr() as *const MibUdpTableOwnerPid);
                     let rows =
                         std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
                     for row in rows {
