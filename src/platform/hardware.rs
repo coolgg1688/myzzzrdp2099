@@ -763,7 +763,8 @@ mod win {
         use std::ptr;
         use winapi::shared::minwindef::FALSE;
         use winapi::um::handleapi::CloseHandle;
-        use winapi::um::processthreadsapi::{OpenProcess, QueryFullProcessImageNameW};
+        use winapi::um::processthreadsapi::OpenProcess;
+        use winapi::um::winbase::QueryFullProcessImageNameW;
         use winapi::um::winnt::PROCESS_QUERY_LIMITED_INFORMATION;
         let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) };
         if h.is_null() {
