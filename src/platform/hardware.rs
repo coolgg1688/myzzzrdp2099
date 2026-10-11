@@ -1641,7 +1641,7 @@ fn proc_map() -> HashMap<u32, (String, String)> {
             break;
         }
         let pid = p.pid().as_u32();
-        let name = p.name().to_string();
+        let name = p.name().to_string_lossy().into_owned();
         let mut path = p
             .exe()
             .map(|x| x.to_string_lossy().into_owned())
@@ -1697,7 +1697,7 @@ fn linux_processes() -> Value {
             break;
         }
         let pid = p.pid().as_u32();
-        let name = p.name().to_string();
+        let name = p.name().to_string_lossy().into_owned();
         let mut path = p
             .exe()
             .map(|x| x.to_string_lossy().into_owned())
@@ -1768,7 +1768,7 @@ fn macos_processes() -> Value {
             break;
         }
         let pid = p.pid().as_u32();
-        let name = p.name().to_string();
+        let name = p.name().to_string_lossy().into_owned();
         let path = p
             .exe()
             .map(|x| x.to_string_lossy().into_owned())
@@ -1840,7 +1840,7 @@ fn android_processes() -> Value {
             break;
         }
         let pid = p.pid().as_u32();
-        let name = p.name().to_string();
+        let name = p.name().to_string_lossy().into_owned();
         let path = p
             .exe()
             .map(|x| x.to_string_lossy().into_owned())
