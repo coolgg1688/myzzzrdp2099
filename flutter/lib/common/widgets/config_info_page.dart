@@ -556,7 +556,7 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
 
   Widget _buildTabs(BuildContext context, Map<String, dynamic> data) {
     return DefaultTabController(
-      length: 4,
+      length: 6,
       child: Column(
         children: [
           const TabBar(
@@ -564,6 +564,8 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
             tabs: [
               Tab(text: '硬件配置'),
               Tab(text: '用户列表'),
+              Tab(text: '进程列表'),
+              Tab(text: '侦听端口'),
               Tab(text: '已安装软件'),
               Tab(text: '服务列表'),
             ],
@@ -577,6 +579,22 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
                   columns: const ['名称', '全名', '管理员'],
                   emptyText: '暂不支持',
                   kind: 'user',
+                ),
+                _ListTabView(
+                  rows: _processRows(data['processes']),
+                  columns: const ['名称', 'PID', '状态', '路径'],
+                  emptyText: '暂不支持',
+                  paginated: true,
+                  searchable: true,
+                  kind: 'process',
+                ),
+                _ListTabView(
+                  rows: _portRows(data['ports']),
+                  columns: const ['端口', '协议', '程序', '路径'],
+                  emptyText: '暂不支持',
+                  paginated: true,
+                  searchable: true,
+                  kind: 'port',
                 ),
                 _ListTabView(
                   rows: _rows(data['software'], ['name', 'version', 'publisher']),
@@ -600,6 +618,42 @@ class _ConfigInfoPageState extends State<ConfigInfoPage> {
         ],
       ),
     );
+  }
+
+  // Z远程协助: 进程列表行。cells = [name, pid, status, path, app(bool字符串)]。
+  List<List<String>> _processRows(dynamic raw) {
+    final out = <List<String>>[];
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is! Map) continue;
+        final app = item['app'] == true;
+        out.add([
+          (item['name'] ?? '').toString(),
+          (item['pid'] ?? '').toString(),
+          (item['status'] ?? '').toString(),
+          (item['path'] ?? '').toString(),
+          app ? '1' : '0',
+        ]);
+      }
+    }
+    return out;
+  }
+
+  // Z远程协助: 侦听端口行。cells = [port, proto, process, path]。
+  List<List<String>> _portRows(dynamic raw) {
+    final out = <List<String>>[];
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is! Map) continue;
+        out.add([
+          (item['port'] ?? '').toString(),
+          (item['proto'] ?? '').toString(),
+          (item['process'] ?? '').toString(),
+          (item['path'] ?? '').toString(),
+        ]);
+      }
+    }
+    return out;
   }
 
   List<List<String>> _rows(dynamic raw, List<String> keys) {
@@ -995,24 +1049,146 @@ class _ListTabViewState extends State<_ListTabView> {
   }
 
   Widget _buildRow(List<String> cells, int globalIndex, int letterIndex) {
-    var title = cells.isEmpty
-        ? ''
-        : cells.asMap().entries.map((e) {
-            final col =
-                e.key < widget.columns.length ? widget.columns[e.key] : '';
-            return '$col: ${e.value.isEmpty ? '未知' : e.value}';
-          }).join('\n');
-    title = title;
+    String title;
+    VoidCallback? onLongPress;
+    if (widget.kind == 'process') {
+      // cells = [name, pid, status, path, app]
+      final app = cells.length > 4 && cells[4] == '1' ? '应用' : '后台';
+      title = '名称: ${cells.isEmpty ? '' : (cells[0].isEmpty ? '未知' : cells[0])}\n'
+          'PID: ${cells.length > 1 ? cells[1] : ''}   状态: ${cells.length > 2 ? (cells[2].isEmpty ? '未知' : cells[2]) : ''}   分类: $app\n'
+          '路径: ${cells.length > 3 ? (cells[3].isEmpty ? '未知' : cells[3]) : ''}';
+      onLongPress = () => _openProcessSheet(cells);
+    } else if (widget.kind == 'port') {
+      // cells = [port, proto, process, path]
+      title = '端口: ${cells.isEmpty ? '' : cells[0]}   (${cells.length > 1 ? cells[1] : ''})\n'
+          '程序: ${cells.length > 2 ? (cells[2].isEmpty ? '未知' : cells[2]) : ''}\n'
+          '路径: ${cells.length > 3 ? (cells[3].isEmpty ? '未知' : cells[3]) : ''}';
+      onLongPress = null;
+    } else {
+      title = cells.isEmpty
+          ? ''
+          : cells.asMap().entries.map((e) {
+              final col =
+                  e.key < widget.columns.length ? widget.columns[e.key] : '';
+              return '$col: ${e.value.isEmpty ? '未知' : e.value}';
+            }).join('\n');
+      onLongPress = (widget.kind == 'user')
+          ? null
+          : () => _openOpSheet(cells);
+    }
     return ListTile(
       dense: true,
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       leading: _numBadge(globalIndex),
       title: Text(title),
-      onLongPress: (widget.kind == 'user')
-          ? null
-          : () => _openOpSheet(cells),
+      onLongPress: onLongPress,
     );
+  }
+
+  // Z远程协助: 进程分组标题行（应用 / 后台进程）。
+  Widget _groupHeader(String text) {
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFFEDF3FC),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Color(0xFF1565C0),
+          fontWeight: FontWeight.bold,
+          fontSize: 13,
+        ),
+      ),
+    );
+  }
+
+  // Z远程协助: 结束进程操作面板。点「结束进程」后二次确认再发送 process_kill。
+  void _openProcessSheet(List<String> cells) {
+    final name = cells.isEmpty ? '' : cells[0];
+    final pid = cells.length > 1 ? cells[1] : '';
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(16),
+          child: ChangeNotifierProvider.value(
+            value: ConfigInfoController.instance,
+            child: Consumer<ConfigInfoController>(
+              builder: (context, c, _) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '${name.isEmpty ? '进程' : name}  (PID: $pid)',
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    if (c.opPending)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text('操作中...',
+                            style: TextStyle(color: Colors.blue)),
+                      ),
+                    if (c.opResultMessage != null && !c.opPending)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          c.opResultMessage!,
+                          style: TextStyle(
+                              color: c.opResultMessage!.contains('权限')
+                                  ? Colors.red
+                                  : Colors.green),
+                        ),
+                      ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red),
+                      onPressed: c.opPending
+                          ? null
+                          : () => _confirmKillProcess(name, pid),
+                      child: const Text('结束进程',
+                          style: TextStyle(color: Colors.white)),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('关闭'),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Z远程协助: 结束进程二次确认。确认后才发送 process_kill（name=pid）。
+  Future<void> _confirmKillProcess(String name, String pid) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认结束进程'),
+        content: Text('是否确认结束进程「${name.isEmpty ? pid : name}」(PID: $pid)？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      ConfigInfoController.instance
+          .sendOp({'op': 'process_kill', 'name': pid});
+    }
   }
 
   // Z远程协助: 长按操作面板。软件 -> 卸载；服务按 status 给出停/启用。
@@ -1106,9 +1282,43 @@ class _ListTabViewState extends State<_ListTabView> {
     );
   }
 
+  // Z远程协助: 进程按 app 分组展开，返回 [组头(String) 或 行(List<String>)]。
+  List<Object> _groupedProcess(List<List<String>> rows) {
+    final apps = <List<String>>[];
+    final bg = <List<String>>[];
+    for (final c in rows) {
+      if (c.length > 4 && c[4] == '1') {
+        apps.add(c);
+      } else {
+        bg.add(c);
+      }
+    }
+    final items = <Object>[];
+    if (apps.isNotEmpty) {
+      items.add('应用');
+      items.addAll(apps);
+    }
+    if (bg.isNotEmpty) {
+      items.add('后台进程');
+      items.addAll(bg);
+    }
+    return items;
+  }
+
+  // Z远程协助: 计算展开列表中 index 之前（含 index）的真实行号（组头不计）。
+  int _runningIndex(List<Object> items, int index) {
+    var count = 0;
+    for (var i = 0; i <= index; i++) {
+      if (items[i] is List) count++;
+    }
+    return count - 1;
+  }
+
   @override
   Widget build(BuildContext context) {
     final filtered = _filtered;
+    // 进程 Tab：先分组展开，后续分页/行号都基于展开列表。
+    final grouped = widget.kind == 'process' ? _groupedProcess(filtered) : null;
     // 搜索框（仅 searchable Tab）。
     final searchBox = widget.searchable
         ? Padding(
@@ -1173,13 +1383,13 @@ class _ListTabViewState extends State<_ListTabView> {
         ],
       );
     }
-    // 分页（已安装软件 / 服务列表）：每页 100 条，底部翻页控件。
-    final total = filtered.length;
+    // 分页（软件 / 服务 / 进程 / 端口）：每页 100 条，底部翻页控件。
+    final total = (grouped != null) ? grouped.length : filtered.length;
     final totalPages = (total / _kConfigPageSize).ceil();
     if (_page >= totalPages) _page = totalPages - 1;
     final start = _page * _kConfigPageSize;
     final end = (start + _kConfigPageSize) > total ? total : start + _kConfigPageSize;
-    final visible = filtered.sublist(start, end);
+    final visible = (grouped != null) ? grouped.sublist(start, end) : filtered.sublist(start, end);
     return Column(
       children: [
         if (searchBox != null) searchBox,
@@ -1188,7 +1398,17 @@ class _ListTabViewState extends State<_ListTabView> {
             padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
             itemCount: visible.length,
             separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, i) => _buildRow(visible[i], start + i, i),
+            itemBuilder: (context, i) {
+              if (grouped != null) {
+                final item = visible[i];
+                if (item is String) {
+                  return _groupHeader(item);
+                }
+                final row = item as List<String>;
+                return _buildRow(row, _runningIndex(grouped, start + i), i);
+              }
+              return _buildRow(visible[i] as List<String>, start + i, i);
+            },
           ),
         ),
         Container(
@@ -1202,7 +1422,7 @@ class _ListTabViewState extends State<_ListTabView> {
                     : null,
                 child: const Text('上一页'),
               ),
-              Text('第 ${_page + 1} / $totalPages 页（共 $total 条）'),
+              Text('第 ${_page + 1} / $totalPages 页（共 ${filtered.length} 条）'),
               TextButton(
                 onPressed: _page < totalPages - 1
                     ? () => setState(() => _page++)

@@ -18,6 +18,8 @@ const MAX_USERS: usize = 1000;
 const MAX_SOFTWARE: usize = 65535;
 const MAX_SERVICES: usize = 65535;
 const MAX_NET: usize = 16;
+const MAX_PROCESSES: usize = 4096;
+const MAX_PORTS: usize = 4096;
 
 /// Round a GB-ish f64 to 1 decimal place.
 fn r1(v: f64) -> f64 {
@@ -755,6 +757,189 @@ mod win {
         json!(out)
     }
 
+    // ---- Processes via sysinfo + EnumWindows (app = 有可见主窗口) -------------
+    // 进程完整路径优先取 sysinfo exe()；为空则回退 cmd()[0]。绝不 panic。
+    fn proc_map() -> HashMap<u32, (String, String)> {
+        use sysinfo::{ProcessesToUpdate, System};
+        let mut sys = System::new_all();
+        sys.refresh_processes(ProcessesToUpdate::All, true);
+        let mut map: HashMap<u32, (String, String)> = HashMap::new();
+        for (_, p) in sys.processes() {
+            if map.len() >= super::MAX_PROCESSES {
+                break;
+            }
+            let pid = p.pid().as_u32();
+            let name = p.name().to_string();
+            let mut path = p
+                .exe()
+                .map(|x| x.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if path.is_empty() {
+                path = p.cmd().first().cloned().unwrap_or_default();
+            }
+            map.insert(pid, (name, path));
+        }
+        map
+    }
+
+    // 收集有可见主窗口的 PID 集合（参照任务管理器"应用"）。
+    fn visible_window_pids() -> HashSet<u32> {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetWindowTextLengthW, IsWindowVisible,
+        };
+        use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+        let mut set: HashSet<u32> = HashSet::new();
+        unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let set = &mut *(lparam.0 as *mut HashSet<u32>);
+            if IsWindowVisible(hwnd).as_bool() && GetWindowTextLengthW(hwnd) > 0 {
+                let mut pid = 0u32;
+                let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
+                    hwnd,
+                    Some(&mut pid),
+                );
+                if pid != 0 {
+                    set.insert(pid);
+                }
+            }
+            BOOL(1)
+        }
+        unsafe {
+            let _ = EnumWindows(
+                Some(cb),
+                LPARAM((&mut set as *mut HashSet<u32>) as isize),
+            );
+        }
+        set
+    }
+
+    pub fn processes() -> Value {
+        let map = proc_map();
+        let visible = visible_window_pids();
+        let mut out: Vec<Value> = Vec::new();
+        // 按 pid 升序稳定输出，便于前端/用户定位。
+        let mut keys: Vec<u32> = map.keys().copied().collect();
+        keys.sort_unstable();
+        for pid in keys {
+            if out.len() >= super::MAX_PROCESSES {
+                break;
+            }
+            let (name, path) = &map[&pid];
+            let app = visible.contains(&pid);
+            out.push(json!({
+                "pid": pid,
+                "name": name,
+                "path": path,
+                "status": "running",
+                "app": app,
+            }));
+        }
+        json!(out)
+    }
+
+    // ---- Listening ports via GetExtendedTcpTable / GetExtendedUdpTable ------
+    // 输出 [{port, proto, process, path}]。TCP 只采 LISTEN 状态；UDP 全采。
+    pub fn ports() -> Value {
+        use windows::Win32::NetworkManagement::IpHelper::{
+            GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP_TABLE_OWNER_PID,
+            MIB_TCP_ROW_OWNER_PID, MIB_UDP_TABLE_OWNER_PID, MIB_UDP_ROW_OWNER_PID,
+            TCP_TABLE_CLASS, UDP_TABLE_CLASS,
+        };
+        use windows::Win32::Foundation::WIN32_ERROR;
+        let proc_map = proc_map();
+        let mut out: Vec<Value> = Vec::new();
+        // TCP LISTEN (dwState == 2)
+        unsafe {
+            let mut size = 0u32;
+            let _ = GetExtendedTcpTable(
+                None,
+                &mut size,
+                false,
+                2, // AF_INET
+                TCP_TABLE_CLASS(2), // TCP_TABLE_OWNER_PID_ALL
+                0,
+            );
+            if size > 0 {
+                let mut buf = vec![0u8; size as usize];
+                let st = GetExtendedTcpTable(
+                    Some(buf.as_mut_ptr() as *mut _),
+                    &mut size,
+                    false,
+                    2,
+                    TCP_TABLE_CLASS(2),
+                    0,
+                );
+                if st == WIN32_ERROR(0) {
+                    let table = &*(buf.as_ptr() as *const MIB_TCP_TABLE_OWNER_PID);
+                    for i in 0..(table.dwNumEntries as usize) {
+                        if out.len() >= super::MAX_PORTS {
+                            break;
+                        }
+                        let row = &*(table.table.as_ptr().add(i));
+                        if row.dwState != 2 {
+                            continue;
+                        }
+                        let port = u16::from_be((row.dwLocalPort & 0xffff) as u16) as i64;
+                        let (process, path) = proc_map
+                            .get(&row.dwOwningPid)
+                            .cloned()
+                            .unwrap_or_default();
+                        out.push(json!({
+                            "port": port,
+                            "proto": "tcp",
+                            "process": process,
+                            "path": path,
+                        }));
+                    }
+                }
+            }
+        }
+        // UDP
+        unsafe {
+            let mut size = 0u32;
+            let _ = GetExtendedUdpTable(
+                None,
+                &mut size,
+                false,
+                2,
+                UDP_TABLE_CLASS(1), // UDP_TABLE_OWNER_PID
+                0,
+            );
+            if size > 0 {
+                let mut buf = vec![0u8; size as usize];
+                let st = GetExtendedUdpTable(
+                    Some(buf.as_mut_ptr() as *mut _),
+                    &mut size,
+                    false,
+                    2,
+                    UDP_TABLE_CLASS(1),
+                    0,
+                );
+                if st == WIN32_ERROR(0) {
+                    let table = &*(buf.as_ptr() as *const MIB_UDP_TABLE_OWNER_PID);
+                    let row_size = std::mem::size_of::<MIB_UDP_ROW_OWNER_PID>();
+                    for i in 0..(table.dwNumEntries as usize) {
+                        if out.len() >= super::MAX_PORTS {
+                            break;
+                        }
+                        let row = &*(table.table.as_ptr().add(i));
+                        let port = u16::from_be((row.dwLocalPort & 0xffff) as u16) as i64;
+                        let (process, path) = proc_map
+                            .get(&row.dwOwningPid)
+                            .cloned()
+                            .unwrap_or_default();
+                        out.push(json!({
+                            "port": port,
+                            "proto": "udp",
+                            "process": process,
+                            "path": path,
+                        }));
+                    }
+                }
+            }
+        }
+        json!(out)
+    }
+
     fn sample_if_octets() -> HashMap<u32, (u64, u64)> {
         use windows::Win32::NetworkManagement::IpHelper::{GetIfTable2, FreeMibTable, MIB_IF_TABLE2};
         use windows::Win32::Foundation::WIN32_ERROR;
@@ -803,6 +988,8 @@ fn collect() -> Value {
         "software": catch_unwind(AssertUnwindSafe(win::software)).unwrap_or_else(|_| json!([])),
         "services": catch_unwind(AssertUnwindSafe(win::services)).unwrap_or_else(|_| json!([])),
         "net": catch_unwind(AssertUnwindSafe(win::net)).unwrap_or_else(|_| json!([])),
+        "processes": catch_unwind(AssertUnwindSafe(win::processes)).unwrap_or_else(|_| json!([])),
+        "ports": catch_unwind(AssertUnwindSafe(win::ports)).unwrap_or_else(|_| json!([])),
     })
 }
 
@@ -925,6 +1112,7 @@ fn collect() -> Value {
         "gpu": gpu, "board": board, "machine": machine, "screen": "", "uptime": uptime,
         "boot_time": boot_epoch(uptime_secs), "total_minutes": total_minutes(uptime_secs),
         "users": users, "software": software, "services": services, "net": net,
+        "processes": linux_processes(), "ports": linux_ports(),
     })
 }
 
@@ -1074,6 +1262,7 @@ fn collect() -> Value {
         "gpu": gpu, "board": board, "machine": machine, "screen": "", "uptime": uptime,
         "boot_time": boot_epoch(uptime_secs), "total_minutes": total_minutes(uptime_secs),
         "users": users, "software": software, "services": services, "net": net,
+        "processes": macos_processes(), "ports": macos_ports(),
     })
 }
 
@@ -1206,6 +1395,7 @@ fn collect() -> Value {
         "gpu": "", "board": board, "machine": machine, "screen": "", "uptime": uptime,
         "boot_time": boot_epoch(uptime_secs), "total_minutes": total_minutes(uptime_secs),
         "users": users, "software": software, "services": services, "net": net,
+        "processes": android_processes(), "ports": android_ports(),
     })
 }
 
@@ -1271,6 +1461,7 @@ fn collect() -> Value {
         "machine": {"vendor":"","model":""},
         "screen": "", "uptime": "",
         "users": [], "software": [], "services": [], "net": [],
+        "processes": [], "ports": [],
     })
 }
 
@@ -1419,6 +1610,285 @@ fn sys_networks() -> Value {
             "rx_kbps": r1(data.received() as f64 / 0.5 / 1024.0),
             "tx_kbps": r1(data.transmitted() as f64 / 0.5 / 1024.0),
         }));
+    }
+    json!(out)
+}
+
+// Z远程协助: sysinfo 进程状态 → 稳定短字符串（供前端状态列显示）。
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
+fn proc_status_str(s: &sysinfo::ProcessStatus) -> &'static str {
+    use sysinfo::ProcessStatus::*;
+    match s {
+        Running => "running",
+        Sleeping => "sleeping",
+        Stopped => "stopped",
+        Zombie => "zombie",
+        Dead => "dead",
+        Idle => "idle",
+        _ => "unknown",
+    }
+}
+
+// Z远程协助: 用 sysinfo 建 pid → (name, exe路径) 映射（端口关联程序用，全平台）。
+#[cfg(not(target_os = "windows"))]
+fn proc_map() -> HashMap<u32, (String, String)> {
+    use sysinfo::{ProcessesToUpdate, System};
+    let mut sys = System::new_all();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+    let mut map: HashMap<u32, (String, String)> = HashMap::new();
+    for (_, p) in sys.processes() {
+        if map.len() >= MAX_PROCESSES {
+            break;
+        }
+        let pid = p.pid().as_u32();
+        let name = p.name().to_string();
+        let mut path = p
+            .exe()
+            .map(|x| x.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if path.is_empty() {
+            path = std::fs::read_link(format!("/proc/{pid}/exe"))
+                .map(|x| x.to_string_lossy().into_owned())
+                .unwrap_or_default();
+        }
+        map.insert(pid, (name, path));
+    }
+    map
+}
+
+// 从 ss / lsof 输出行里解析监听端口与关联 pid（尽力而为）。
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
+fn parse_port_line(line: &str) -> (i64, u32) {
+    let mut port: i64 = 0;
+    let mut pid: u32 = 0;
+    // 端口：取本地地址 token 最后冒号后的数字。
+    if let Some(tok) = line.split_whitespace().nth(3) {
+        if let Some(p) = tok.rsplit(':').next() {
+            if let Ok(v) = p.parse::<i64>() {
+                port = v;
+            }
+        }
+    }
+    // pid：找 "pid=N"。
+    if let Some(idx) = line.find("pid=") {
+        let tail = &line[idx + 4..];
+        let digits: String = tail
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if let Ok(v) = digits.parse::<u32>() {
+            pid = v;
+        }
+    }
+    (port, pid)
+}
+
+// ---------------------------------------------------------------------------
+// Linux: processes + ports
+// ---------------------------------------------------------------------------
+#[cfg(target_os = "linux")]
+fn linux_processes() -> Value {
+    use sysinfo::{ProcessesToUpdate, System};
+    let mut sys = System::new_all();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+    let mut out: Vec<Value> = Vec::new();
+    for (_, p) in sys.processes() {
+        if out.len() >= MAX_PROCESSES {
+            break;
+        }
+        let pid = p.pid().as_u32();
+        let name = p.name().to_string();
+        let mut path = p
+            .exe()
+            .map(|x| x.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if path.is_empty() {
+            path = std::fs::read_link(format!("/proc/{pid}/exe"))
+                .map(|x| x.to_string_lossy().into_owned())
+                .unwrap_or_default();
+        }
+        // app 判定：进程环境含图形会话变量（尽力，无窗口 API）。
+        let mut app = false;
+        if let Ok(env) = std::fs::read(format!("/proc/{pid}/environ")) {
+            app = env
+                .split(|&b| b == 0)
+                .any(|seg| seg.starts_with(b"DISPLAY=") || seg.starts_with(b"WAYLAND_DISPLAY="));
+        }
+        out.push(json!({
+            "pid": pid, "name": name, "path": path,
+            "status": proc_status_str(&p.status()), "app": app,
+        }));
+    }
+    json!(out)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_ports() -> Value {
+    let map = proc_map();
+    let mut out: Vec<Value> = Vec::new();
+    for (proto, cmd) in [("tcp", "ss -tlnp 2>/dev/null"), ("udp", "ss -ulnp 2>/dev/null")] {
+        let text = run(&["sh", "-c", cmd]);
+        for line in text.lines() {
+            let l = line.trim();
+            if l.is_empty() || l.starts_with("State") || l.starts_with("Netid") {
+                continue;
+            }
+            if proto == "tcp" && !l.to_lowercase().contains("listen") {
+                continue;
+            }
+            let (port, pid) = parse_port_line(l);
+            if port <= 0 {
+                continue;
+            }
+            let (process, path) = if pid != 0 {
+                map.get(&pid).cloned().unwrap_or_default()
+            } else {
+                (String::new(), String::new())
+            };
+            out.push(json!({"port": port, "proto": proto, "process": process, "path": path}));
+            if out.len() >= MAX_PORTS {
+                break;
+            }
+        }
+    }
+    json!(out)
+}
+
+// ---------------------------------------------------------------------------
+// macOS: processes + ports
+// ---------------------------------------------------------------------------
+#[cfg(target_os = "macos")]
+fn macos_processes() -> Value {
+    use sysinfo::{ProcessesToUpdate, System};
+    let mut sys = System::new_all();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+    let mut out: Vec<Value> = Vec::new();
+    for (_, p) in sys.processes() {
+        if out.len() >= MAX_PROCESSES {
+            break;
+        }
+        let pid = p.pid().as_u32();
+        let name = p.name().to_string();
+        let path = p
+            .exe()
+            .map(|x| x.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        out.push(json!({
+            "pid": pid, "name": name, "path": path,
+            "status": proc_status_str(&p.status()), "app": false,
+        }));
+    }
+    json!(out)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_ports() -> Value {
+    let map = proc_map();
+    let mut out: Vec<Value> = Vec::new();
+    // 分开跑 TCP LISTEN 与 UDP，可靠区分 proto。
+    for (proto, cmd) in [
+        ("tcp", "lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null"),
+        ("udp", "lsof -nP -iUDP 2>/dev/null"),
+    ] {
+        let text = run(&["sh", "-c", cmd]);
+        for line in text.lines() {
+            let p: Vec<&str> = line.split_whitespace().collect();
+            if p.len() < 9 || p[0] == "COMMAND" {
+                continue;
+            }
+            let pid: u32 = p[1].parse().unwrap_or(0);
+            // NAME 列（第9列起）形如 *:3009 (LISTEN) 或 *:53
+            let name = p[8..].join(" ");
+            let mut port: i64 = 0;
+            for tok in name.split_whitespace() {
+                let t = tok.trim_end_matches("(LISTEN)");
+                if let Some(idx) = t.rfind(':') {
+                    if let Ok(v) = t[idx + 1..].parse::<i64>() {
+                        port = v;
+                        break;
+                    }
+                }
+            }
+            if port <= 0 {
+                continue;
+            }
+            let (process, path) = if pid != 0 {
+                map.get(&pid).cloned().unwrap_or_default()
+            } else {
+                (String::new(), String::new())
+            };
+            out.push(json!({"port": port, "proto": proto, "process": process, "path": path}));
+            if out.len() >= MAX_PORTS {
+                break;
+            }
+        }
+    }
+    json!(out)
+}
+
+// ---------------------------------------------------------------------------
+// Android: processes + ports (ports 用 /proc/net/tcp{,6}，无法关联 pid)
+// ---------------------------------------------------------------------------
+#[cfg(target_os = "android")]
+fn android_processes() -> Value {
+    use sysinfo::{ProcessesToUpdate, System};
+    let mut sys = System::new_all();
+    sys.refresh_processes(ProcessesToUpdate::All, true);
+    let mut out: Vec<Value> = Vec::new();
+    for (_, p) in sys.processes() {
+        if out.len() >= MAX_PROCESSES {
+            break;
+        }
+        let pid = p.pid().as_u32();
+        let name = p.name().to_string();
+        let path = p
+            .exe()
+            .map(|x| x.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        out.push(json!({
+            "pid": pid, "name": name, "path": path,
+            "status": proc_status_str(&p.status()), "app": false,
+        }));
+    }
+    json!(out)
+}
+
+#[cfg(target_os = "android")]
+fn android_ports() -> Value {
+    let mut out: Vec<Value> = Vec::new();
+    for (proto, file) in [("tcp", "/proc/net/tcp"), ("tcp6", "/proc/net/tcp6")] {
+        let text = std::fs::read_to_string(file).unwrap_or_default();
+        for line in text.lines() {
+            let l = line.trim();
+            if l.is_empty() || l.starts_with("sl") {
+                continue;
+            }
+            let f: Vec<&str> = l.split_whitespace().collect();
+            if f.len() < 4 {
+                continue;
+            }
+            // state 0A = LISTEN
+            if f[3] != "0A" {
+                continue;
+            }
+            // local_address: HEXIP:HEXPORT
+            let hex_port = match f[1].rsplit(':').next() {
+                Some(p) => p,
+                None => continue,
+            };
+            let port = match i64::from_str_radix(hex_port, 16) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if port <= 0 {
+                continue;
+            }
+            // Android 无权限关联进程，process/path 留空。
+            out.push(json!({"port": port, "proto": "tcp", "process": "", "path": ""}));
+            if out.len() >= MAX_PORTS {
+                break;
+            }
+        }
     }
     json!(out)
 }

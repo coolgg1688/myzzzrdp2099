@@ -34,6 +34,7 @@ pub fn execute_op(json: &str) -> String {
         "uninstall" => uninstall(&name),
         "service_stop" => service_control(&name, false),
         "service_start" => service_control(&name, true),
+        "process_kill" => process_kill(&name),
         _ => fail_result(format!("未知操作: {op}")),
     }
 }
@@ -308,6 +309,32 @@ fn service_control(name: &str, start: bool) -> String {
     win_impl::service_control(name, start)
 }
 
+// Z远程协助: 结束进程（Windows 纯 FFI，无 Command/弹窗）。
+#[cfg(windows)]
+fn process_kill(pid: &str) -> String {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+    };
+    let pid: u32 = match pid.trim().parse() {
+        Ok(p) => p,
+        Err(_) => return fail_result("无效的进程ID".to_owned()),
+    };
+    unsafe {
+        let h = match OpenProcess(PROCESS_TERMINATE, false, pid) {
+            Ok(h) => h,
+            Err(e) => return fail_result(format!("打开进程失败: {e}")),
+        };
+        let r = TerminateProcess(h, 1);
+        let _ = CloseHandle(h);
+        if r.is_ok() {
+            ok_result("已结束进程".to_owned())
+        } else {
+            fail_result("结束进程失败，可能权限不足".to_owned())
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Linux
 // ---------------------------------------------------------------------------
@@ -349,6 +376,19 @@ fn service_control(name: &str, start: bool) -> String {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn process_kill(pid: &str) -> String {
+    use std::process::Command;
+    match Command::new("kill").args(["-9", pid]).output() {
+        Ok(o) if o.status.success() => ok_result("已结束进程".to_owned()),
+        Ok(o) => fail_result(format!(
+            "结束进程失败: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        )),
+        Err(e) => fail_result(format!("结束进程失败: {e}")),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // macOS
 // ---------------------------------------------------------------------------
@@ -366,6 +406,19 @@ fn service_control(name: &str, start: bool) -> String {
     let verb = if start { "start" } else { "stop" };
     let script = format!("launchctl {verb} {name}");
     run_admin_osascript(&script)
+}
+
+#[cfg(target_os = "macos")]
+fn process_kill(pid: &str) -> String {
+    use std::process::Command;
+    match Command::new("kill").args(["-9", pid]).output() {
+        Ok(o) if o.status.success() => ok_result("已结束进程".to_owned()),
+        Ok(o) => fail_result(format!(
+            "结束进程失败: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        )),
+        Err(e) => fail_result(format!("结束进程失败: {e}")),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -399,6 +452,11 @@ fn service_control(_name: &str, _start: bool) -> String {
     fail_result("暂不支持".to_owned())
 }
 
+#[cfg(target_os = "android")]
+fn process_kill(_pid: &str) -> String {
+    fail_result("Android 结束进程需系统级权限，暂不支持".to_owned())
+}
+
 // ---------------------------------------------------------------------------
 // Unknown / unsupported platforms
 // ---------------------------------------------------------------------------
@@ -409,5 +467,10 @@ fn uninstall(_name: &str) -> String {
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos", target_os = "android")))]
 fn service_control(_name: &str, _start: bool) -> String {
+    fail_result("暂不支持".to_owned())
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos", target_os = "android")))]
+fn process_kill(_pid: &str) -> String {
     fail_result("暂不支持".to_owned())
 }
