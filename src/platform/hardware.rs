@@ -784,30 +784,24 @@ mod win {
 
     // 收集有可见主窗口的 PID 集合（参照任务管理器"应用"）。
     fn visible_window_pids() -> HashSet<u32> {
-        use windows::Win32::UI::WindowsAndMessaging::{
-            EnumWindows, GetWindowTextLengthW, IsWindowVisible,
+        use winapi::shared::windef::{HWND, LPARAM};
+        use winapi::um::winuser::{
+            EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible,
         };
-        use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
         let mut set: HashSet<u32> = HashSet::new();
-        unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
-            let set = &mut *(lparam.0 as *mut HashSet<u32>);
-            if IsWindowVisible(hwnd).as_bool() && GetWindowTextLengthW(hwnd) > 0 {
-                let mut pid = 0u32;
-                let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
-                    hwnd,
-                    Some(&mut pid),
-                );
+        unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> i32 {
+            let set = &mut *(lparam as *mut HashSet<u32>);
+            if IsWindowVisible(hwnd) != 0 && GetWindowTextLengthW(hwnd) > 0 {
+                let mut pid: u32 = 0;
+                GetWindowThreadProcessId(hwnd, &mut pid);
                 if pid != 0 {
                     set.insert(pid);
                 }
             }
-            BOOL(1)
+            1
         }
         unsafe {
-            let _ = EnumWindows(
-                Some(cb),
-                LPARAM((&mut set as *mut HashSet<u32>) as isize),
-            );
+            EnumWindows(Some(cb), (&mut set as *mut HashSet<u32>) as LPARAM);
         }
         set
     }
@@ -839,43 +833,46 @@ mod win {
     // ---- Listening ports via GetExtendedTcpTable / GetExtendedUdpTable ------
     // 输出 [{port, proto, process, path}]。TCP 只采 LISTEN 状态；UDP 全采。
     pub fn ports() -> Value {
-        use windows::Win32::NetworkManagement::IpHelper::{
-            GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP_TABLE_OWNER_PID,
-            MIB_TCP_ROW_OWNER_PID, MIB_UDP_TABLE_OWNER_PID, MIB_UDP_ROW_OWNER_PID,
-            TCP_TABLE_CLASS, UDP_TABLE_CLASS,
+        use winapi::shared::iphlpapi::{TCP_TABLE_OWNER_PID_LISTENER, UDP_TABLE_OWNER_PID};
+        use winapi::shared::minwindef::FALSE;
+        use winapi::shared::ntdef::NO_ERROR;
+        use winapi::shared::ws2def::AF_INET;
+        use winapi::um::iphlpapi::{
+            GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP_STATE_LISTEN,
+            MIB_TCPTABLE_OWNER_PID, MIB_UDPTABLE_OWNER_PID,
         };
-        use windows::Win32::Foundation::WIN32_ERROR;
         let proc_map = proc_map();
         let mut out: Vec<Value> = Vec::new();
-        // TCP LISTEN (dwState == 2)
+        // TCP LISTEN (MIB_TCP_STATE_LISTEN == 2)
         unsafe {
-            let mut size = 0u32;
-            let _ = GetExtendedTcpTable(
-                None,
+            let mut size: u32 = 0;
+            let r1 = GetExtendedTcpTable(
+                std::ptr::null_mut(),
                 &mut size,
-                false,
-                2, // AF_INET
-                TCP_TABLE_CLASS(2), // TCP_TABLE_OWNER_PID_ALL
+                FALSE,
+                AF_INET,
+                TCP_TABLE_OWNER_PID_LISTENER,
                 0,
             );
-            if size > 0 {
+            if r1 == NO_ERROR && size > 0 {
                 let mut buf = vec![0u8; size as usize];
-                let st = GetExtendedTcpTable(
-                    Some(buf.as_mut_ptr() as *mut _),
+                let r2 = GetExtendedTcpTable(
+                    buf.as_mut_ptr() as *mut _,
                     &mut size,
-                    false,
-                    2,
-                    TCP_TABLE_CLASS(2),
+                    FALSE,
+                    AF_INET,
+                    TCP_TABLE_OWNER_PID_LISTENER,
                     0,
                 );
-                if st == WIN32_ERROR(0) {
-                    let table = &*(buf.as_ptr() as *const MIB_TCP_TABLE_OWNER_PID);
-                    for i in 0..(table.dwNumEntries as usize) {
+                if r2 == NO_ERROR {
+                    let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
+                    let rows =
+                        std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
+                    for row in rows {
                         if out.len() >= super::MAX_PORTS {
                             break;
                         }
-                        let row = &*(table.table.as_ptr().add(i));
-                        if row.dwState != 2 {
+                        if row.dwState != MIB_TCP_STATE_LISTEN {
                             continue;
                         }
                         let port = u16::from_be((row.dwLocalPort & 0xffff) as u16) as i64;
@@ -895,33 +892,33 @@ mod win {
         }
         // UDP
         unsafe {
-            let mut size = 0u32;
-            let _ = GetExtendedUdpTable(
-                None,
+            let mut size: u32 = 0;
+            let r1 = GetExtendedUdpTable(
+                std::ptr::null_mut(),
                 &mut size,
-                false,
-                2,
-                UDP_TABLE_CLASS(1), // UDP_TABLE_OWNER_PID
+                FALSE,
+                AF_INET,
+                UDP_TABLE_OWNER_PID,
                 0,
             );
-            if size > 0 {
+            if r1 == NO_ERROR && size > 0 {
                 let mut buf = vec![0u8; size as usize];
-                let st = GetExtendedUdpTable(
-                    Some(buf.as_mut_ptr() as *mut _),
+                let r2 = GetExtendedUdpTable(
+                    buf.as_mut_ptr() as *mut _,
                     &mut size,
-                    false,
-                    2,
-                    UDP_TABLE_CLASS(1),
+                    FALSE,
+                    AF_INET,
+                    UDP_TABLE_OWNER_PID,
                     0,
                 );
-                if st == WIN32_ERROR(0) {
-                    let table = &*(buf.as_ptr() as *const MIB_UDP_TABLE_OWNER_PID);
-                    let row_size = std::mem::size_of::<MIB_UDP_ROW_OWNER_PID>();
-                    for i in 0..(table.dwNumEntries as usize) {
+                if r2 == NO_ERROR {
+                    let table = &*(buf.as_ptr() as *const MIB_UDPTABLE_OWNER_PID);
+                    let rows =
+                        std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
+                    for row in rows {
                         if out.len() >= super::MAX_PORTS {
                             break;
                         }
-                        let row = &*(table.table.as_ptr().add(i));
                         let port = u16::from_be((row.dwLocalPort & 0xffff) as u16) as i64;
                         let (process, path) = proc_map
                             .get(&row.dwOwningPid)

@@ -312,22 +312,22 @@ fn service_control(name: &str, start: bool) -> String {
 // Z远程协助: 结束进程（Windows 纯 FFI，无 Command/弹窗）。
 #[cfg(windows)]
 fn process_kill(pid: &str) -> String {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{
-        OpenProcess, TerminateProcess, PROCESS_TERMINATE,
-    };
+    use winapi::shared::minwindef::FALSE;
+    use winapi::um::handleapi::CloseHandle;
+    use winapi::um::processthreadsapi::{OpenProcess, TerminateProcess};
+    use winapi::um::winnt::PROCESS_TERMINATE;
     let pid: u32 = match pid.trim().parse() {
         Ok(p) => p,
         Err(_) => return fail_result("无效的进程ID".to_owned()),
     };
     unsafe {
-        let h = match OpenProcess(PROCESS_TERMINATE, false, pid) {
-            Ok(h) => h,
-            Err(e) => return fail_result(format!("打开进程失败: {e}")),
-        };
+        let h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+        if h.is_null() {
+            return fail_result("打开进程失败，可能权限不足".to_owned());
+        }
         let r = TerminateProcess(h, 1);
-        let _ = CloseHandle(h);
-        if r.is_ok() {
+        CloseHandle(h);
+        if r != 0 {
             ok_result("已结束进程".to_owned())
         } else {
             fail_result("结束进程失败，可能权限不足".to_owned())
