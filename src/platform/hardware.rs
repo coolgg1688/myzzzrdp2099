@@ -840,127 +840,35 @@ mod win {
     // winapi 0.3.9 只提供 GetExtendedTcp/UdpTable 函数，未提供 OWNER_PID 表结构与常量，
     // 此处按 Windows SDK 布局自行定义（与 MIB_TCPTABLE_OWNER_PID 等完全一致）。
     pub fn ports() -> Value {
-        use winapi::shared::minwindef::FALSE;
-        use winapi::shared::ws2def::AF_INET;
-        use winapi::um::iphlpapi::{GetExtendedTcpTable, GetExtendedUdpTable};
-        #[repr(C)]
-        struct MibTcpRowOwnerPid {
-            dwState: u32,
-            dwLocalAddr: u32,
-            dwLocalPort: u32,
-            dwRemoteAddr: u32,
-            dwRemotePort: u32,
-            dwOwningPid: u32,
-        }
-        #[repr(C)]
-        struct MibTcpTableOwnerPid {
-            dwNumEntries: u32,
-            table: [MibTcpRowOwnerPid; 1],
-        }
-        #[repr(C)]
-        struct MibUdpRowOwnerPid {
-            dwLocalAddr: u32,
-            dwLocalPort: u32,
-            dwOwningPid: u32,
-        }
-        #[repr(C)]
-        struct MibUdpTableOwnerPid {
-            dwNumEntries: u32,
-            table: [MibUdpRowOwnerPid; 1],
-        }
-        const TCP_TABLE_OWNER_PID_LISTENER: u32 = 3;
-        const UDP_TABLE_OWNER_PID: u32 = 1;
-        const MIB_TCP_STATE_LISTEN: u32 = 2;
-        let proc_map = proc_map();
+        // Z远程协助: 用 netstat2（最成熟跨平台库，内部走 OS 级 API）枚举监听端口。
+        // 不再手写 GetExtendedTcpTable buffer 探测（旧实现首次调用返回 ERROR_INSUFFICIENT_BUFFER 被误判为空）。
+        use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState, get_sockets_info};
+        let af = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
+        let proto = ProtocolFlags::TCP | ProtocolFlags::UDP;
+        let map = proc_map();
         let mut out: Vec<Value> = Vec::new();
-        // TCP LISTEN
-        unsafe {
-            let mut size: u32 = 0;
-            let r1 = GetExtendedTcpTable(
-                std::ptr::null_mut(),
-                &mut size,
-                FALSE,
-                AF_INET as u32,
-                TCP_TABLE_OWNER_PID_LISTENER,
-                0,
-            );
-            if r1 == 0 && size > 0 {
-                let mut buf = vec![0u8; size as usize];
-                let r2 = GetExtendedTcpTable(
-                    buf.as_mut_ptr() as *mut _,
-                    &mut size,
-                    FALSE,
-                    AF_INET as u32,
-                    TCP_TABLE_OWNER_PID_LISTENER,
-                    0,
-                );
-                if r2 == 0 {
-                    let table = &*(buf.as_ptr() as *const MibTcpTableOwnerPid);
-                    let rows =
-                        std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
-                    for row in rows {
-                        if out.len() >= super::MAX_PORTS {
-                            break;
-                        }
-                        if row.dwState != MIB_TCP_STATE_LISTEN {
-                            continue;
-                        }
-                        let port = u16::from_be((row.dwLocalPort & 0xffff) as u16) as i64;
-                        let (process, path) = proc_map
-                            .get(&row.dwOwningPid)
-                            .cloned()
-                            .unwrap_or_default();
-                        out.push(json!({
-                            "port": port,
-                            "proto": "tcp",
-                            "process": process,
-                            "path": path,
-                        }));
+        if let Ok(sis) = get_sockets_info(af, proto) {
+            for si in sis {
+                let (pro, port, pids) = match &si.protocol_socket_info {
+                    ProtocolSocketInfo::Tcp(t) if t.state == TcpState::Listen => {
+                        ("tcp", t.local_port, si.associated_pids.clone())
                     }
+                    ProtocolSocketInfo::Udp(u) => ("udp", u.local_port, si.associated_pids.clone()),
+                    _ => continue,
+                };
+                if port == 0 {
+                    continue;
                 }
-            }
-        }
-        // UDP
-        unsafe {
-            let mut size: u32 = 0;
-            let r1 = GetExtendedUdpTable(
-                std::ptr::null_mut(),
-                &mut size,
-                FALSE,
-                AF_INET as u32,
-                UDP_TABLE_OWNER_PID,
-                0,
-            );
-            if r1 == 0 && size > 0 {
-                let mut buf = vec![0u8; size as usize];
-                let r2 = GetExtendedUdpTable(
-                    buf.as_mut_ptr() as *mut _,
-                    &mut size,
-                    FALSE,
-                    AF_INET as u32,
-                    UDP_TABLE_OWNER_PID,
-                    0,
-                );
-                if r2 == 0 {
-                    let table = &*(buf.as_ptr() as *const MibUdpTableOwnerPid);
-                    let rows =
-                        std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
-                    for row in rows {
-                        if out.len() >= super::MAX_PORTS {
-                            break;
-                        }
-                        let port = u16::from_be((row.dwLocalPort & 0xffff) as u16) as i64;
-                        let (process, path) = proc_map
-                            .get(&row.dwOwningPid)
-                            .cloned()
-                            .unwrap_or_default();
-                        out.push(json!({
-                            "port": port,
-                            "proto": "udp",
-                            "process": process,
-                            "path": path,
-                        }));
-                    }
+                let pid = pids.first().copied().unwrap_or(0);
+                let (process, path) = map.get(&pid).cloned().unwrap_or_default();
+                out.push(json!({
+                    "port": port as i64,
+                    "proto": pro,
+                    "process": process,
+                    "path": path,
+                }));
+                if out.len() >= super::MAX_PORTS {
+                    break;
                 }
             }
         }
@@ -1683,7 +1591,44 @@ fn proc_map() -> HashMap<u32, (String, String)> {
     map
 }
 
-// 从 ss / lsof 输出行里解析监听端口与关联 pid（尽力而为）。
+// Z远程协助: 用 netstat2（最成熟跨平台库，内部走 OS 级 API，不依赖 ss/lsof 命令）枚举监听端口。
+// 输出 [{port, proto, process, path}]。TCP 仅取 Listen；UDP 全取。4 平台统一。
+#[cfg(not(target_os = "windows"))]
+fn collect_ports() -> Value {
+    use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState, get_sockets_info};
+    let af = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
+    let proto = ProtocolFlags::TCP | ProtocolFlags::UDP;
+    let map = proc_map();
+    let mut out: Vec<Value> = Vec::new();
+    if let Ok(sis) = get_sockets_info(af, proto) {
+        for si in sis {
+            let (pro, port, pids) = match &si.protocol_socket_info {
+                ProtocolSocketInfo::Tcp(t) if t.state == TcpState::Listen => {
+                    ("tcp", t.local_port, si.associated_pids.clone())
+                }
+                ProtocolSocketInfo::Udp(u) => ("udp", u.local_port, si.associated_pids.clone()),
+                _ => continue,
+            };
+            if port == 0 {
+                continue;
+            }
+            let pid = pids.first().copied().unwrap_or(0);
+            let (process, path) = map.get(&pid).cloned().unwrap_or_default();
+            out.push(json!({
+                "port": port as i64,
+                "proto": pro,
+                "process": process,
+                "path": path,
+            }));
+            if out.len() >= MAX_PORTS {
+                break;
+            }
+        }
+    }
+    json!(out)
+}
+
+// 从 ss / lsof 输出行里解析监听端口与关联 pid（尽力而为，仅作 android 回退用）。
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
 fn parse_port_line(line: &str) -> (i64, u32) {
     let mut port: i64 = 0;
@@ -1751,34 +1696,7 @@ fn linux_processes() -> Value {
 
 #[cfg(target_os = "linux")]
 fn linux_ports() -> Value {
-    let map = proc_map();
-    let mut out: Vec<Value> = Vec::new();
-    for (proto, cmd) in [("tcp", "ss -tlnp 2>/dev/null"), ("udp", "ss -ulnp 2>/dev/null")] {
-        let text = run(&["sh", "-c", cmd]);
-        for line in text.lines() {
-            let l = line.trim();
-            if l.is_empty() || l.starts_with("State") || l.starts_with("Netid") {
-                continue;
-            }
-            if proto == "tcp" && !l.to_lowercase().contains("listen") {
-                continue;
-            }
-            let (port, pid) = parse_port_line(l);
-            if port <= 0 {
-                continue;
-            }
-            let (process, path) = if pid != 0 {
-                map.get(&pid).cloned().unwrap_or_default()
-            } else {
-                (String::new(), String::new())
-            };
-            out.push(json!({"port": port, "proto": proto, "process": process, "path": path}));
-            if out.len() >= MAX_PORTS {
-                break;
-            }
-        }
-    }
-    json!(out)
+    collect_ports()
 }
 
 // ---------------------------------------------------------------------------
@@ -1810,47 +1728,7 @@ fn macos_processes() -> Value {
 
 #[cfg(target_os = "macos")]
 fn macos_ports() -> Value {
-    let map = proc_map();
-    let mut out: Vec<Value> = Vec::new();
-    // 分开跑 TCP LISTEN 与 UDP，可靠区分 proto。
-    for (proto, cmd) in [
-        ("tcp", "lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null"),
-        ("udp", "lsof -nP -iUDP 2>/dev/null"),
-    ] {
-        let text = run(&["sh", "-c", cmd]);
-        for line in text.lines() {
-            let p: Vec<&str> = line.split_whitespace().collect();
-            if p.len() < 9 || p[0] == "COMMAND" {
-                continue;
-            }
-            let pid: u32 = p[1].parse().unwrap_or(0);
-            // NAME 列（第9列起）形如 *:3009 (LISTEN) 或 *:53
-            let name = p[8..].join(" ");
-            let mut port: i64 = 0;
-            for tok in name.split_whitespace() {
-                let t = tok.trim_end_matches("(LISTEN)");
-                if let Some(idx) = t.rfind(':') {
-                    if let Ok(v) = t[idx + 1..].parse::<i64>() {
-                        port = v;
-                        break;
-                    }
-                }
-            }
-            if port <= 0 {
-                continue;
-            }
-            let (process, path) = if pid != 0 {
-                map.get(&pid).cloned().unwrap_or_default()
-            } else {
-                (String::new(), String::new())
-            };
-            out.push(json!({"port": port, "proto": proto, "process": process, "path": path}));
-            if out.len() >= MAX_PORTS {
-                break;
-            }
-        }
-    }
-    json!(out)
+    collect_ports()
 }
 
 // ---------------------------------------------------------------------------
@@ -1882,6 +1760,12 @@ fn android_processes() -> Value {
 
 #[cfg(target_os = "android")]
 fn android_ports() -> Value {
+    // 优先 netstat2（netlink 方式）。非 root 的 Android 受 SELinux 限制可能拿不到系统级监听端口，
+    // 此时回退到 /proc/net/tcp{,6} 尽力读取（root 或部分 ROM 可读）。
+    let v = collect_ports();
+    if v.as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+        return v;
+    }
     let mut out: Vec<Value> = Vec::new();
     for (proto, file) in [("tcp", "/proc/net/tcp"), ("tcp6", "/proc/net/tcp6")] {
         let text = std::fs::read_to_string(file).unwrap_or_default();

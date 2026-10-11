@@ -91,6 +91,8 @@ kcp-sys= { git = "https://github.com/rustdesk-org/kcp-sys", branch = "rustdesk-p
 reqwest = { version = "0.12", features = ["blocking", "socks", "json", "native-tls", "rustls-tls", "rustls-tls-native-roots", "gzip", "zstd"], default-features=false }
 # Z远程协助: 统一软硬件采集用 sysinfo（Rust 最强跨平台硬件库）。支持 windows/linux/macos/android。
 sysinfo = { version = "0.33", default-features = false, features = ["system", "disk", "network", "user", "multithread", "windows"] }
+# Z远程协助: 跨平台(win/linux/mac/android)最成熟可靠的监听端口枚举库（内部走 OS 级 API，不依赖 ss/lsof 命令）
+netstat2 = "0.11"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 # https://github.com/rustdesk/rustdesk/discussions/10197, not use cpal on linux
