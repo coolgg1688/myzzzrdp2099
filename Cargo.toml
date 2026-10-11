@@ -132,6 +132,8 @@ winapi = { version = "0.3", features = [
     "iphlpapi",
     "processthreadsapi",
     "handleapi",
+    "securitybaseapi",
+    "ntdef",
     "winnt",
     "winbase",
 ] }

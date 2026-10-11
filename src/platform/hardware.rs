@@ -757,6 +757,38 @@ mod win {
         json!(out)
     }
 
+    // 尝试启用 SeDebugPrivilege（被控端以管理员/服务运行时成功），从而允许 OpenProcess 读取
+    // SYSTEM/LOCAL SERVICE 等服务进程的完整路径。普通权限下静默失败，仅能取到本会话进程路径。
+    fn enable_debug_privilege() {
+        use winapi::shared::minwindef::FALSE;
+        use winapi::um::handleapi::CloseHandle;
+        use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcessToken};
+        use winapi::um::securitybaseapi::AdjustTokenPrivileges;
+        use winapi::um::winbase::LookupPrivilegeValueW;
+        use winapi::um::winnt::{
+            LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
+            TOKEN_QUERY,
+        };
+        let mut tok: winapi::um::winnt::HANDLE = std::ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut tok) } == 0 {
+            return;
+        }
+        let mut luid: winapi::shared::ntdef::LUID = unsafe { std::mem::zeroed() };
+        let name: Vec<u16> = "SeDebugPrivilege\0".encode_utf16().collect();
+        if unsafe { LookupPrivilegeValueW(std::ptr::null(), name.as_ptr(), &mut luid) } == 0 {
+            unsafe { CloseHandle(tok) };
+            return;
+        }
+        let mut tp = TOKEN_PRIVILEGES {
+            PrivilegeCount: 1,
+            Privileges: [LUID_AND_ATTRIBUTES { Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }],
+        };
+        unsafe {
+            AdjustTokenPrivileges(tok, FALSE, &mut tp, 0, std::ptr::null_mut(), std::ptr::null_mut());
+            CloseHandle(tok);
+        }
+    }
+
     // 用 Windows 原生 API 取进程完整可执行文件路径（普通权限 PROCESS_QUERY_LIMITED_INFORMATION 即可，
     // 比 sysinfo exe() 在 Windows 上拿到更多进程，如 sqlservr/mysqld/svchost 等）。
     fn process_image_path(pid: u32) -> String {
@@ -784,6 +816,7 @@ mod win {
     // 进程完整路径优先取 QueryFullProcessImageNameW；为空则回退 sysinfo exe()/cmd()[0]。绝不 panic。
     fn proc_map() -> HashMap<u32, (String, String)> {
         use sysinfo::{ProcessesToUpdate, System};
+        enable_debug_privilege();
         let mut sys = System::new_all();
         sys.refresh_processes(ProcessesToUpdate::All, true);
         let mut map: HashMap<u32, (String, String)> = HashMap::new();
