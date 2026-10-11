@@ -757,8 +757,30 @@ mod win {
         json!(out)
     }
 
+    // 用 Windows 原生 API 取进程完整可执行文件路径（普通权限 PROCESS_QUERY_LIMITED_INFORMATION 即可，
+    // 比 sysinfo exe() 在 Windows 上拿到更多进程，如 sqlservr/mysqld/svchost 等）。
+    fn process_image_path(pid: u32) -> String {
+        use std::ptr;
+        use winapi::shared::minwindef::FALSE;
+        use winapi::um::handleapi::CloseHandle;
+        use winapi::um::processthreadsapi::{OpenProcess, QueryFullProcessImageNameW};
+        use winapi::um::winnt::PROCESS_QUERY_LIMITED_INFORMATION;
+        let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) };
+        if h.is_null() {
+            return String::new();
+        }
+        let mut buf = [0u16; 2048];
+        let mut sz = buf.len() as u32;
+        let ok = unsafe { QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut sz) };
+        unsafe { CloseHandle(h) };
+        if ok == 0 || sz == 0 {
+            return String::new();
+        }
+        String::from_utf16_lossy(&buf[..sz as usize])
+    }
+
     // ---- Processes via sysinfo + EnumWindows (app = 有可见主窗口) -------------
-    // 进程完整路径优先取 sysinfo exe()；为空则回退 cmd()[0]。绝不 panic。
+    // 进程完整路径优先取 QueryFullProcessImageNameW；为空则回退 sysinfo exe()/cmd()[0]。绝不 panic。
     fn proc_map() -> HashMap<u32, (String, String)> {
         use sysinfo::{ProcessesToUpdate, System};
         let mut sys = System::new_all();
@@ -770,10 +792,13 @@ mod win {
             }
             let pid = p.pid().as_u32();
             let name = p.name().to_string_lossy().into_owned();
-            let mut path = p
-                .exe()
-                .map(|x| x.to_string_lossy().into_owned())
-                .unwrap_or_default();
+            let mut path = process_image_path(pid);
+            if path.is_empty() {
+                path = p
+                    .exe()
+                    .map(|x| x.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+            }
             if path.is_empty() {
                 path = p
                     .cmd()

@@ -132,6 +132,7 @@ winapi = { version = "0.3", features = [
     "iphlpapi",
     "processthreadsapi",
     "handleapi",
+    "winnt",
 ] }
 windows = { version = "0.61", features = [
     "Win32",
