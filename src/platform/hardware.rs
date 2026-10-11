@@ -769,7 +769,7 @@ mod win {
                 break;
             }
             let pid = p.pid().as_u32();
-            let name = p.name().to_string();
+            let name = p.name().to_string_lossy().into_owned();
             let mut path = p
                 .exe()
                 .map(|x| x.to_string_lossy().into_owned())
