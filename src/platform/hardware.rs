@@ -775,7 +775,11 @@ mod win {
                 .map(|x| x.to_string_lossy().into_owned())
                 .unwrap_or_default();
             if path.is_empty() {
-                path = p.cmd().first().cloned().unwrap_or_default();
+                path = p
+                    .cmd()
+                    .first()
+                    .map(|x| x.to_string_lossy().into_owned())
+                    .unwrap_or_default();
             }
             map.insert(pid, (name, path));
         }
