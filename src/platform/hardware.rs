@@ -906,6 +906,8 @@ mod win {
         let proto = ProtocolFlags::TCP | ProtocolFlags::UDP;
         let map = proc_map();
         let mut out: Vec<Value> = Vec::new();
+        // Z远程协助: 同一端口+同一协议仅保留一条（允许 1999 tcp + 1999 udp，不允许 1999 tcp 重复）。
+        let mut seen: std::collections::HashSet<(u16, &str)> = std::collections::HashSet::new();
         if let Ok(sis) = get_sockets_info(af, proto) {
             for si in sis {
                 let (pro, port, pids) = match &si.protocol_socket_info {
@@ -916,6 +918,9 @@ mod win {
                     _ => continue,
                 };
                 if port == 0 {
+                    continue;
+                }
+                if !seen.insert((port, pro)) {
                     continue;
                 }
                 let pid = pids.first().copied().unwrap_or(0);
@@ -1659,6 +1664,8 @@ fn collect_ports() -> Value {
     let proto = ProtocolFlags::TCP | ProtocolFlags::UDP;
     let map = proc_map();
     let mut out: Vec<Value> = Vec::new();
+    // Z远程协助: 同一端口+同一协议仅保留一条。
+    let mut seen: std::collections::HashSet<(u16, &str)> = std::collections::HashSet::new();
     if let Ok(sis) = get_sockets_info(af, proto) {
         for si in sis {
             let (pro, port, pids) = match &si.protocol_socket_info {
@@ -1669,6 +1676,9 @@ fn collect_ports() -> Value {
                 _ => continue,
             };
             if port == 0 {
+                continue;
+            }
+            if !seen.insert((port, pro)) {
                 continue;
             }
             let pid = pids.first().copied().unwrap_or(0);
@@ -1826,6 +1836,8 @@ fn android_ports() -> Value {
         return v;
     }
     let mut out: Vec<Value> = Vec::new();
+    // Z远程协助: tcp 与 tcp6 可能出现同端口，按 (端口, 协议) 去重。
+    let mut seen: std::collections::HashSet<(i64, &str)> = std::collections::HashSet::new();
     for (proto, file) in [("tcp", "/proc/net/tcp"), ("tcp6", "/proc/net/tcp6")] {
         let text = std::fs::read_to_string(file).unwrap_or_default();
         for line in text.lines() {
@@ -1851,6 +1863,9 @@ fn android_ports() -> Value {
                 Err(_) => continue,
             };
             if port <= 0 {
+                continue;
+            }
+            if !seen.insert((port, proto)) {
                 continue;
             }
             // Android 无权限关联进程，process/path 留空。
