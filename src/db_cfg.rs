@@ -87,6 +87,11 @@ use std::fs;
 /// sidecar at `<orig>/app_data/zrdp.db` instead, so the portable config is found
 /// and authorizations persist beside the actual exe. The directory is created
 /// on demand by `open_conn`.
+///
+/// Installed-build fallback: when the exe dir is not writable for the current user
+/// (e.g. installed under `C:\Program Files`, whose `app_data` is read-only for
+/// `BUILTIN\Users`), writing the sidecar silently fails and the auth is lost on
+/// restart. In that case we fall back to a user-writable `home/app_data/zrdp.db`.
 fn db_path() -> PathBuf {
     #[cfg(target_os = "android")]
     {
@@ -109,11 +114,39 @@ fn db_path() -> PathBuf {
         }
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
-                return dir.join(APP_DATA_DIR).join(DB_FILE_NAME);
+                if dir_is_writable(dir) {
+                    return dir.join(APP_DATA_DIR).join(DB_FILE_NAME);
+                }
+                // exe dir not writable -> fall through to user-writable home.
             }
+        }
+        let mut d = crate::config::Config::get_home();
+        if !d.as_os_str().is_empty() {
+            d.push(APP_DATA_DIR);
+            return d.join(DB_FILE_NAME);
         }
         PathBuf::new()
     }
+}
+
+/// Best-effort check that `dir` can be written by the current process (a probe
+/// file is created then removed). Used to decide between the exe sidecar and the
+/// user-writable home fallback for the cfg DB on installed builds.
+fn dir_is_writable(dir: &Path) -> bool {
+    if fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(format!(".zrdp_w_{}", std::process::id()));
+    let ok = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map(|_| {
+            let _ = fs::remove_file(&probe);
+            true
+        })
+        .unwrap_or(false);
+    ok
 }
 
 fn open_conn() -> Option<Connection> {
