@@ -2564,8 +2564,10 @@ class _AboutState extends State<_About> {
                     } catch (e) {
                       res = '授权失败：$e';
                     }
-                    if (res.contains('授权失败')) {
-                      showToast(res);
+                    // Z远程协助: 只有以「授权：」成功前缀开头的才算成功；其余一律判失败，
+                    // 避免「写入数据库失败」这类错误串因不含「授权失败」而被误当成功（假成功→关闭丢失授权）。
+                    if (!res.startsWith('授权：')) {
+                      showToast(res.startsWith('授权失败') ? res : '授权失败：$res');
                       return;
                     }
                     showToast('授权成功：$res');
