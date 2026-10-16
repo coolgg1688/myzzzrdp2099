@@ -124,6 +124,10 @@ fn open_conn() -> Option<Connection> {
     if let Some(dir) = path.parent() {
         let _ = fs::create_dir_all(dir);
     }
+    // zremote66: log the resolved sqlite DB path once so the operator can verify the
+    // authorization persisted to the expected sidecar (e.g. beside the real exe vs
+    // the single-file extraction dir) instead of guessing.
+    log::info!("zremote66 cfg0 db path: {}", path.display());
     let conn = Connection::open(&path).ok()?;
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS zrdb_cfg (uid INTEGER PRIMARY KEY AUTOINCREMENT, type VARCHAR(32) NOT NULL, cfgs TEXT NOT NULL, status SMALLINT NOT NULL DEFAULT 1); \
