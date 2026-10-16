@@ -20,6 +20,14 @@ const META_LINE_PREFIX_TIMESTAMP: &str = "timestamp = ";
 const META_LINE_PREFIX_FILE: &str = "file = ";
 const APP_PREFIX: &str = "rustdesk";
 const APPNAME_RUNTIME_ENV_KEY: &str = "RUSTDESK_APPNAME";
+// zremote66: the sqlite cfg0/audit database (portable sidecar) lives under
+// `app_data/zrdp.db` inside the extraction dir only when the packer env vars are
+// missing. Rebuilds bump the embedded build timestamp, which currently makes us
+// wipe the whole extraction dir — that would silently delete the sidecar DB and
+// lose the saved authorization. These constants let us preserve the DB across the
+// wipe so authorizations survive close-and-reopen even across CI rebuilds.
+const APP_DATA_DIR_NAME: &str = "app_data";
+const CFG_DB_FILE_NAME: &str = "zrdp.db";
 #[cfg(windows)]
 const SET_FOREGROUND_WINDOW_ENV_KEY: &str = "SET_FOREGROUND_WINDOW";
 
@@ -172,6 +180,20 @@ fn setup(
     };
 
     let mut ts = 0;
+    // zremote66: keep the sqlite cfg0/audit sidecar across the extraction-dir wipe.
+    // A rebuild changes the embedded build timestamp -> is_timestamp_matches fails ->
+    // remove_dir_all deletes everything under %LOCALAPPDATA%/<app>, including a
+    // `app_data/zrdp.db` that fell back here. We snapshot it first and restore it
+    // after re-extraction so a saved authorization survives close-and-reopen even
+    // when a new build is tested.
+    let backup_db: Option<Vec<u8>> = {
+        let p = dir.join(APP_DATA_DIR_NAME).join(CFG_DB_FILE_NAME);
+        if p.is_file() {
+            std::fs::read(&p).ok()
+        } else {
+            None
+        }
+    };
     if clear || !is_timestamp_matches(&dir, &mut ts) {
         #[cfg(windows)]
         if _args.is_empty() {
@@ -186,6 +208,12 @@ fn setup(
         file.write_to_file(&dir);
     }
     write_meta(&dir, ts, &metadata_paths);
+    if let Some(bytes) = backup_db {
+        let app_data = dir.join(APP_DATA_DIR_NAME);
+        if std::fs::create_dir_all(&app_data).is_ok() {
+            std::fs::write(app_data.join(CFG_DB_FILE_NAME), bytes).ok();
+        }
+    }
     #[cfg(windows)]
     win::copy_runtime_broker(&dir);
     #[cfg(linux)]
