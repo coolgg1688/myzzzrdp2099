@@ -1,6 +1,10 @@
 //! Portable sqlite-backed config override + audit log (zremote66).
 //!
-//! Layout (portable only): `<exe_dir>/app_data/zrdp.db`
+//! Layout (portable): `<exe_dir>/app_data/zrdp.db`
+//! Layout (installed, exe dir read-only for standard users):
+//!   `<exe_dir>/app_data/zrdp.db` (admin/elevated) or machine-wide
+//!   `%ProgramData%\zremote66\app_data\zrdp.db` shared by all users, else
+//!   per-user `<home>/app_data/zrdp.db` as a last resort.
 //!
 //! Tables:
 //!   zrdb_cfg(uid PK, type VARCHAR(32), cfgs TEXT, status SMALLINT DEFAULT 1)
@@ -75,9 +79,9 @@ fn aes_decrypt(b64: &str) -> anyhow::Result<Vec<u8>> {
 
 use std::fs;
 
-/// DB path. Desktop: `<exe_dir>/app_data/zrdp.db` (sidecar, portable + installed
-/// both read the same place). Android: app data dir (`Config::get_home()` +
-/// `app_data/zrdp.db`) — there is no writable "exe" dir on Android.
+/// DB path. Desktop: `<exe_dir>/app_data/zrdp.db` (portable sidecar).
+/// Android: app data dir (`Config::get_home()` + `app_data/zrdp.db`) — there is
+/// no writable "exe" dir on Android.
 ///
 /// zremote66 single-file mode: the self-extracting packer runs the payload from a
 /// per-version extraction dir under `%LOCALAPPDATA%`, so `current_exe()` points
@@ -88,10 +92,15 @@ use std::fs;
 /// and authorizations persist beside the actual exe. The directory is created
 /// on demand by `open_conn`.
 ///
-/// Installed-build fallback: when the exe dir is not writable for the current user
+/// Installed-build sharing: when the exe dir is not writable for the current user
 /// (e.g. installed under `C:\Program Files`, whose `app_data` is read-only for
-/// `BUILTIN\Users`), writing the sidecar silently fails and the auth is lost on
-/// restart. In that case we fall back to a user-writable `home/app_data/zrdp.db`.
+/// `BUILTIN\Users`), the sidecar can be written only by an elevated admin — so a
+/// standard user would read a different per-user `home/app_data/zrdp.db` and the
+/// auth would appear "lost". To make the license machine-wide (all users see the
+/// same authorization and a standard user can register too), we fall back to the
+/// machine-wide shared directory `%ProgramData%\zremote66\app_data\zrdp.db`
+/// (`BUILTIN\Users` can create and write subdirs there by default). Only when
+/// that is unavailable do we fall back to the per-user `home/app_data/zrdp.db`.
 fn db_path() -> PathBuf {
     #[cfg(target_os = "android")]
     {
@@ -104,29 +113,72 @@ fn db_path() -> PathBuf {
     }
     #[cfg(not(target_os = "android"))]
     {
-        // zremote66 single-file: prefer the real exe dir exported by the packer.
-        if std::env::var("RUSTDESK_APPNAME").is_ok() {
-            if let Ok(orig) = std::env::var("RUSTDESK_ORIG_EXE_DIR") {
-                if !orig.trim().is_empty() {
-                    return Path::new(&orig).join(APP_DATA_DIR).join(DB_FILE_NAME);
-                }
+        resolve_desktop_db()
+    }
+}
+
+/// Resolve the DB path on desktop (Windows / macOS / Linux), non-Android.
+///
+/// Priority:
+///  1. Portable / single-file: real exe dir (as exported by the packer, or the
+///     current exe's parent) — used only when it is writable, so a standard user
+///     never tries to write the read-only Program Files sidecar.
+///  2. Machine-wide shared dir (`%ProgramData%\zremote66\app_data`) — all users
+///     share one authorization DB; standard users can create/write it.
+///  3. Per-user `home/app_data` — last resort if ProgramData is unavailable.
+#[cfg(not(target_os = "android"))]
+fn resolve_desktop_db() -> PathBuf {
+    // Candidate 1: portable / single-file sidecar beside the real exe.
+    let mut sidecar: Option<PathBuf> = None;
+    if std::env::var("RUSTDESK_APPNAME").is_ok() {
+        if let Ok(orig) = std::env::var("RUSTDESK_ORIG_EXE_DIR") {
+            if !orig.trim().is_empty() {
+                sidecar = Some(Path::new(&orig).join(APP_DATA_DIR).join(DB_FILE_NAME));
             }
         }
+    }
+    if sidecar.is_none() {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
-                if dir_is_writable(dir) {
-                    return dir.join(APP_DATA_DIR).join(DB_FILE_NAME);
-                }
-                // exe dir not writable -> fall through to user-writable home.
+                sidecar = Some(dir.join(APP_DATA_DIR).join(DB_FILE_NAME));
             }
         }
-        let mut d = crate::config::Config::get_home();
-        if !d.as_os_str().is_empty() {
-            d.push(APP_DATA_DIR);
+    }
+    if let Some(p) = sidecar {
+        if let Some(dir) = p.parent() {
+            if dir_is_writable(dir) {
+                return p;
+            }
+        }
+    }
+    // Candidate 2: machine-wide shared DB, one authorization for all users.
+    if let Some(pd) = machine_shared_dir() {
+        let d = pd.join(APP_DATA_DIR);
+        if dir_is_writable(&d) {
             return d.join(DB_FILE_NAME);
         }
-        PathBuf::new()
     }
+    // Candidate 3: per-user home (last resort).
+    let mut d = crate::config::Config::get_home();
+    if !d.as_os_str().is_empty() {
+        d.push(APP_DATA_DIR);
+        return d.join(DB_FILE_NAME);
+    }
+    PathBuf::new()
+}
+
+/// Machine-wide shared config root. On Windows this is `%ProgramData%` (standard
+/// users can create subdirectories and write there by default). On other desktop
+/// OSes we return `None` and fall back to the per-user home.
+#[cfg(target_os = "windows")]
+fn machine_shared_dir() -> Option<PathBuf> {
+    std::env::var_os("PROGRAMDATA")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+#[cfg(not(target_os = "windows"))]
+fn machine_shared_dir() -> Option<PathBuf> {
+    None
 }
 
 /// Best-effort check that `dir` can be written by the current process (a probe
